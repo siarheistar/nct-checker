@@ -1,0 +1,86 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run linting
+        run: |
+          pip install flake8
+          flake8 app.py --max-line-length=120 --ignore=E501,W503
+
+      - name: Test imports
+        run: python -c "from app import app, NCTChecker; print('Imports OK')"
+
+      - name: Test health endpoint
+        run: |
+          python -c "
+          from app import app
+          client = app.test_client()
+          response = client.get('/health')
+          assert response.status_code == 200
+          data = response.get_json()
+          assert data['status'] == 'healthy'
+          print('Health endpoint OK')
+          "
+
+      - name: Test home page
+        run: |
+          python -c "
+          from app import app
+          client = app.test_client()
+          response = client.get('/')
+          assert response.status_code == 200
+          assert b'NCT Availability Checker' in response.data
+          print('Home page OK')
+          "
+
+  deploy-render:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Deploy to Render
+        run: |
+          echo "Render auto-deploys from GitHub on push to main branch"
+          echo "Ensure you have connected this repo to Render.com"
+          echo "Deployment will be triggered automatically"
+
+  # Optional: Deploy to Railway
+  # deploy-railway:
+  #   needs: test
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/main'
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Deploy to Railway
+  #       uses: bervProject/railway-deploy@main
+  #       with:
+  #         railway_token: ${{ secrets.RAILWAY_TOKEN }}
+  #         service: nct-checker

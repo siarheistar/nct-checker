@@ -370,6 +370,100 @@
             font-weight: 600;
         }
 
+        /* Alert Card Styles */
+        .alert-card {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.1) 100%);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .alert-card h3 {
+            color: #a78bfa;
+            font-size: 1rem;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .alert-form {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .alert-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .alert-input {
+            flex: 1;
+            min-width: 150px;
+            padding: 12px 16px;
+            font-size: 0.95rem;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+        }
+
+        .alert-input:focus {
+            outline: none;
+            border-color: #a78bfa;
+        }
+
+        .alert-input::placeholder {
+            color: #666;
+        }
+
+        .alert-select {
+            padding: 12px 16px;
+            font-size: 0.95rem;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            min-width: 120px;
+        }
+
+        .alert-select option {
+            background: #1a1a2e;
+            color: #fff;
+        }
+
+        .btn-alert {
+            background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
+            color: white;
+            padding: 12px 24px;
+            white-space: nowrap;
+        }
+
+        .btn-alert:hover:not(:disabled) {
+            box-shadow: 0 10px 30px rgba(167, 139, 250, 0.3);
+        }
+
+        .alert-success {
+            background: rgba(34, 197, 94, 0.15);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            color: #4ade80;
+            margin-top: 12px;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            color: #f87171;
+            margin-top: 12px;
+        }
+
         footer {
             text-align: center;
             padding: 30px;
@@ -622,6 +716,27 @@
                 });
                 html += '</div></div>';
 
+                // Add alert subscription card
+                html += `
+                    <div class="alert-card">
+                        <h3>&#x1F514; Get notified when earlier slots appear</h3>
+                        <div class="alert-form">
+                            <div class="alert-row">
+                                <input type="email" class="alert-input" id="alertEmail" placeholder="Your email address">
+                                <select class="alert-select" id="alertDays">
+                                    <option value="7">Within 7 days</option>
+                                    <option value="14">Within 14 days</option>
+                                    <option value="30" selected>Within 30 days</option>
+                                    <option value="60">Within 60 days</option>
+                                    <option value="90">Within 90 days</option>
+                                </select>
+                                <button class="btn-alert" onclick="createAlert('${data.registration}')">Set Alert</button>
+                            </div>
+                            <div id="alertMessage"></div>
+                        </div>
+                    </div>
+                `;
+
             } else {
                 html += `
                     <div class="no-slots">
@@ -633,6 +748,40 @@
             }
 
             results.innerHTML = html;
+        }
+
+        async function createAlert(registration) {
+            const email = document.getElementById('alertEmail').value.trim();
+            const targetDays = parseInt(document.getElementById('alertDays').value);
+            const messageDiv = document.getElementById('alertMessage');
+
+            if (!email || !email.includes('@')) {
+                messageDiv.innerHTML = '<div class="alert-error">Please enter a valid email address</div>';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/alerts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ registration, email, target_days: targetDays })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    messageDiv.innerHTML = `
+                        <div class="alert-success">
+                            &#x2705; Alert created! We'll email you at <strong>${email}</strong> when slots within ${targetDays} days become available.
+                            <br><small style="opacity: 0.7;">Current earliest: ${data.current_earliest} days</small>
+                        </div>
+                    `;
+                } else {
+                    messageDiv.innerHTML = `<div class="alert-error">${data.error}</div>`;
+                }
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="alert-error">Failed to create alert. Please try again.</div>';
+            }
         }
     </script>
 </body>

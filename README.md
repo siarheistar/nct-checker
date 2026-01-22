@@ -2,12 +2,24 @@
 
 A web application to check NCT (National Car Test) slot availability across test centres in Ireland.
 
+![CI/CD](https://github.com/YOUR_USERNAME/nct-checker/actions/workflows/ci.yml/badge.svg)
+
 ## Features
 
 - Check NCT availability by vehicle registration
 - View all available test centres and dates
+- **Email alerts** when earlier slots become available
 - Mobile-friendly responsive design
 - Real-time data from ncts.ie
+- Background monitoring for slot changes
+
+## Screenshots
+
+The app shows:
+- Vehicle details (make, model, year, colour, NCT due date)
+- Available test centres sorted by earliest date
+- Days until each slot
+- Option to set email alerts for earlier availability
 
 ## Local Development
 
@@ -77,6 +89,18 @@ gcloud run deploy nct-checker \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | 5000 |
+| `SMTP_HOST` | SMTP server for email alerts | smtp.gmail.com |
+| `SMTP_PORT` | SMTP port | 587 |
+| `SMTP_USER` | SMTP username (email) | - |
+| `SMTP_PASS` | SMTP password or app password | - |
+| `FROM_EMAIL` | From address for alerts | SMTP_USER |
+
+### Setting up Gmail for email alerts
+
+1. Enable 2-Factor Authentication on your Google account
+2. Go to [Google App Passwords](https://myaccount.google.com/apppasswords)
+3. Create a new app password for "Mail"
+4. Use your Gmail address as `SMTP_USER` and the app password as `SMTP_PASS`
 
 ## API Endpoints
 
@@ -118,8 +142,62 @@ Check NCT availability for a registration.
 }
 ```
 
+### `POST /api/alerts`
+Create an email alert for earlier slot availability.
+
+**Request:**
+```json
+{
+  "registration": "05D77568",
+  "email": "user@example.com",
+  "target_days": 30
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "alert_id": "05D77568_user@example.com",
+  "message": "Alert created! You'll be notified when slots within 30 days become available.",
+  "current_earliest": 125
+}
+```
+
+### `DELETE /api/alerts/<alert_id>`
+Delete an alert subscription.
+
+### `GET /api/alerts`
+List all active alerts (admin endpoint).
+
 ### `GET /health`
 Health check endpoint.
+
+## CI/CD
+
+This project includes GitHub Actions for:
+- Automated testing on push/PR
+- Linting with flake8
+- Auto-deploy to Render.com on merge to main
+
+## Architecture
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│   Web Browser   │────▶│   Flask App     │
+└─────────────────┘     └────────┬────────┘
+                                 │
+                    ┌────────────┴────────────┐
+                    │                         │
+              ┌─────▼─────┐           ┌───────▼───────┐
+              │ Playwright │           │ Alert Service │
+              │  (Browser) │           │  (Background) │
+              └─────┬─────┘           └───────┬───────┘
+                    │                         │
+              ┌─────▼─────┐           ┌───────▼───────┐
+              │  ncts.ie  │           │  SMTP Server  │
+              └───────────┘           └───────────────┘
+```
 
 ## License
 

@@ -1,11 +1,18 @@
 """
 NCT Availability Checker Web App
 Flask-based web application for checking NCT test slot availability
+With email notifications for earlier slot availability
 """
 
 import asyncio
 import re
+import os
 import json
+import smtplib
+import threading
+import time
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Optional
@@ -13,6 +20,10 @@ from flask import Flask, render_template, request, jsonify
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 app = Flask(__name__)
+
+# In-memory storage for alerts (use Redis/DB in production)
+alerts_store = {}
+alerts_lock = threading.Lock()
 
 
 @dataclass
@@ -299,5 +310,215 @@ def health():
     return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
 
 
+# ============== Email Alert System ==============
+
+@dataclass
+class Alert:
+    """Represents an alert subscription"""
+    registration: str
+    email: str
+    target_days: int  # Alert if slot is within this many days
+    current_earliest: int  # Current earliest known days
+    created_at: str
+    last_checked: str = ""
+    last_notified: str = ""
+
+    def to_dict(self):
+        return asdict(self)
+
+
+def send_email(to_email: str, subject: str, html_content: str) -> bool:
+    """Send email notification using SMTP"""
+    smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+    smtp_port = int(os.environ.get('SMTP_PORT', '587'))
+    smtp_user = os.environ.get('SMTP_USER', '')
+    smtp_pass = os.environ.get('SMTP_PASS', '')
+    from_email = os.environ.get('FROM_EMAIL', smtp_user)
+
+    if not smtp_user or not smtp_pass:
+        print("Email not configured - SMTP_USER and SMTP_PASS required")
+        return False
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = from_email
+        msg['To'] = to_email
+
+        html_part = MIMEText(html_content, 'html')
+        msg.attach(html_part)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_email, to_email, msg.as_string())
+
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
+
+
+def send_slot_alert(alert: Alert, slot_info: dict):
+    """Send alert about earlier slot availability"""
+    subject = f"NCT Alert: Earlier slot available for {alert.registration}!"
+
+    html_content = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 30px; border-radius: 12px;">
+            <h1 style="margin: 0; color: #ffd700;">Earlier NCT Slot Found!</h1>
+        </div>
+        <div style="padding: 30px; background: #f5f5f5;">
+            <p style="font-size: 18px; margin-bottom: 20px;">
+                Good news! An earlier NCT slot is now available for <strong>{alert.registration}</strong>.
+            </p>
+
+            <div style="background: white; padding: 20px; border-radius: 8px; border-left: 4px solid #ffd700;">
+                <h3 style="margin-top: 0; color: #333;">{slot_info.get('centre', 'Unknown Centre')}</h3>
+                <p style="font-size: 24px; color: #1a1a2e; margin: 10px 0;">
+                    {slot_info.get('date_formatted', 'Unknown Date')}
+                </p>
+                <p style="color: #666; margin-bottom: 0;">
+                    <strong style="color: #ffd700; font-size: 20px;">{slot_info.get('days_away', '?')}</strong> days from today
+                </p>
+            </div>
+
+            <p style="margin-top: 25px;">
+                <a href="https://www.ncts.ie" style="display: inline-block; background: #ffd700; color: #1a1a2e; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                    Book Now on NCTS.ie
+                </a>
+            </p>
+
+            <p style="color: #888; font-size: 12px; margin-top: 30px;">
+                You're receiving this because you set up an alert for slots within {alert.target_days} days.
+                Previous earliest was {alert.current_earliest} days away.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    return send_email(alert.email, subject, html_content)
+
+
+@app.route('/api/alerts', methods=['POST'])
+def create_alert():
+    """Create a new alert subscription"""
+    data = request.get_json()
+    registration = data.get('registration', '').strip().upper().replace(' ', '').replace('-', '')
+    email = data.get('email', '').strip().lower()
+    target_days = data.get('target_days', 30)
+
+    if not registration or len(registration) < 5:
+        return jsonify({"success": False, "error": "Invalid registration"})
+
+    if not email or '@' not in email:
+        return jsonify({"success": False, "error": "Invalid email address"})
+
+    # Check current availability first
+    checker = NCTChecker(registration)
+    result = run_async(checker.check_availability())
+
+    if not result['success'] or not result['slots']:
+        return jsonify({
+            "success": False,
+            "error": "Could not find availability for this registration. Please check it first."
+        })
+
+    current_earliest = result['slots'][0]['days_away']
+
+    alert = Alert(
+        registration=registration,
+        email=email,
+        target_days=target_days,
+        current_earliest=current_earliest,
+        created_at=datetime.now().isoformat(),
+        last_checked=datetime.now().isoformat()
+    )
+
+    alert_id = f"{registration}_{email}"
+
+    with alerts_lock:
+        alerts_store[alert_id] = alert
+
+    return jsonify({
+        "success": True,
+        "alert_id": alert_id,
+        "message": f"Alert created! You'll be notified when slots within {target_days} days become available.",
+        "current_earliest": current_earliest,
+        "vehicle": result['vehicle']
+    })
+
+
+@app.route('/api/alerts/<alert_id>', methods=['DELETE'])
+def delete_alert(alert_id):
+    """Delete an alert subscription"""
+    with alerts_lock:
+        if alert_id in alerts_store:
+            del alerts_store[alert_id]
+            return jsonify({"success": True, "message": "Alert deleted"})
+
+    return jsonify({"success": False, "error": "Alert not found"})
+
+
+@app.route('/api/alerts', methods=['GET'])
+def list_alerts():
+    """List all alerts (for admin/debugging)"""
+    with alerts_lock:
+        return jsonify({
+            "alerts": [a.to_dict() for a in alerts_store.values()],
+            "count": len(alerts_store)
+        })
+
+
+def check_alerts_background():
+    """Background task to check alerts periodically"""
+    while True:
+        time.sleep(300)  # Check every 5 minutes
+
+        with alerts_lock:
+            alerts_to_check = list(alerts_store.items())
+
+        for alert_id, alert in alerts_to_check:
+            try:
+                checker = NCTChecker(alert.registration)
+                result = run_async(checker.check_availability())
+
+                if result['success'] and result['slots']:
+                    earliest = result['slots'][0]
+                    days = earliest['days_away']
+
+                    # Update last checked
+                    with alerts_lock:
+                        if alert_id in alerts_store:
+                            alerts_store[alert_id].last_checked = datetime.now().isoformat()
+
+                    # Check if earlier than before AND within target
+                    if days < alert.current_earliest and days <= alert.target_days:
+                        # Send notification
+                        if send_slot_alert(alert, earliest):
+                            with alerts_lock:
+                                if alert_id in alerts_store:
+                                    alerts_store[alert_id].current_earliest = days
+                                    alerts_store[alert_id].last_notified = datetime.now().isoformat()
+                            print(f"Alert sent for {alert.registration} to {alert.email}")
+
+            except Exception as e:
+                print(f"Error checking alert {alert_id}: {e}")
+
+        # Sleep between checks to avoid hammering the site
+        time.sleep(60)
+
+
+# Start background alert checker (only if not in debug mode)
+def start_alert_checker():
+    if not app.debug:
+        thread = threading.Thread(target=check_alerts_background, daemon=True)
+        thread.start()
+        print("Background alert checker started")
+
+
 if __name__ == '__main__':
+    start_alert_checker()
     app.run(debug=True, host='0.0.0.0', port=5000)
