@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NCT Availability Checker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 40px 0 30px;
+        }
+
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #a0a0a0;
+            font-size: 0.95rem;
+        }
+
+        .search-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 16px 20px;
+            font-size: 1.1rem;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #ffd700;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        input[type="text"]::placeholder {
+            color: #666;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+
+        button {
+            padding: 16px 32px;
+            font-size: 1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #ffd700 0%, #ffb700 100%);
+            color: #1a1a2e;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(255, 215, 0, 0.3);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 215, 0, 0.2);
+            border-top-color: #ffd700;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #a0a0a0;
+            font-size: 0.95rem;
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results.active {
+            display: block;
+        }
+
+        .vehicle-card {
+            background: linear-gradient(135deg, #2d2d44 0%, #1f1f35 100%);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .vehicle-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .vehicle-icon {
+            font-size: 2.5rem;
+        }
+
+        .vehicle-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .vehicle-reg {
+            color: #ffd700;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .vehicle-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+        }
+
+        .detail-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .detail-label {
+            font-size: 0.75rem;
+            color: #888;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+
+        .detail-value {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .nct-due {
+            background: rgba(255, 87, 87, 0.15);
+            border: 1px solid rgba(255, 87, 87, 0.3);
+        }
+
+        .nct-due .detail-value {
+            color: #ff6b6b;
+        }
+
+        .slots-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .slots-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .slots-count {
+            background: rgba(255, 215, 0, 0.2);
+            color: #ffd700;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .slots-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .slot-card {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+        }
+
+        .slot-card:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 215, 0, 0.2);
+        }
+
+        .slot-card.selected {
+            background: rgba(255, 215, 0, 0.1);
+            border-color: rgba(255, 215, 0, 0.3);
+        }
+
+        .slot-centre {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .slot-date {
+            color: #a0a0a0;
+            font-size: 0.9rem;
+        }
+
+        .slot-days {
+            text-align: right;
+        }
+
+        .days-number {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #ffd700;
+        }
+
+        .days-label {
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        .slot-card.urgent .days-number {
+            color: #ff6b6b;
+        }
+
+        .slot-card.soon .days-number {
+            color: #ffa726;
+        }
+
+        .error-card {
+            background: rgba(255, 87, 87, 0.1);
+            border: 1px solid rgba(255, 87, 87, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            color: #ff6b6b;
+        }
+
+        .no-slots {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+
+        .no-slots-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+
+        .summary {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.15) 0%, rgba(255, 183, 0, 0.1) 100%);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .summary-title {
+            font-size: 0.85rem;
+            color: #ffd700;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .summary-content {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .centre-summary {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .centre-summary-title {
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 12px;
+        }
+
+        .centre-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .centre-chip {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .centre-chip-date {
+            color: #ffd700;
+            font-weight: 600;
+        }
+
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            color: #888;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 15px;
+            }
+
+            header {
+                padding: 30px 0 20px;
+            }
+
+            .logo {
+                font-size: 2.5rem;
+            }
+
+            h1 {
+                font-size: 1.4rem;
+            }
+
+            .search-card {
+                padding: 20px;
+            }
+
+            .input-group {
+                flex-direction: column;
+            }
+
+            button {
+                width: 100%;
+            }
+
+            .vehicle-details {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .slot-card {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .slot-days {
+                text-align: left;
+                display: flex;
+                align-items: baseline;
+                gap: 8px;
+            }
+
+            .days-number {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">&#x1F697;</div>
+            <h1>NCT Availability Checker</h1>
+            <p class="subtitle">Find the earliest NCT test slots in Ireland</p>
+        </header>
+
+        <div class="search-card">
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <input type="text" id="registration" placeholder="Enter registration (e.g., 05D77568)" maxlength="10" autocomplete="off">
+                </div>
+                <button id="checkBtn" onclick="checkAvailability()">Check Availability</button>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p class="loading-text">Checking NCT availability...</p>
+            <p class="loading-text" style="margin-top: 8px; font-size: 0.85rem;">This may take up to 30 seconds</p>
+        </div>
+
+        <div class="results" id="results">
+            <!-- Results will be inserted here -->
+        </div>
+    </div>
+
+    <footer>
+        <p>Data from <a href="https://www.ncts.ie" target="_blank">ncts.ie</a> &bull; Not affiliated with NCTS</p>
+    </footer>
+
+    <script>
+        const regInput = document.getElementById('registration');
+        const checkBtn = document.getElementById('checkBtn');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+
+        regInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') checkAvailability();
+        });
+
+        async function checkAvailability() {
+            const registration = regInput.value.trim();
+
+            if (!registration) {
+                alert('Please enter a registration number');
+                return;
+            }
+
+            checkBtn.disabled = true;
+            loading.classList.add('active');
+            results.classList.remove('active');
+            results.innerHTML = '';
+
+            try {
+                const response = await fetch('/api/check', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ registration })
+                });
+
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                results.innerHTML = `
+                    <div class="error-card">
+                        <p>Failed to check availability. Please try again.</p>
+                    </div>
+                `;
+            } finally {
+                checkBtn.disabled = false;
+                loading.classList.remove('active');
+                results.classList.add('active');
+            }
+        }
+
+        function displayResults(data) {
+            if (!data.success) {
+                results.innerHTML = `
+                    <div class="error-card">
+                        <p>${data.error}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+
+            // Vehicle info
+            if (data.vehicle) {
+                const v = data.vehicle;
+                html += `
+                    <div class="vehicle-card">
+                        <div class="vehicle-header">
+                            <span class="vehicle-icon">&#x1F697;</span>
+                            <div>
+                                <div class="vehicle-title">${v.year} ${v.make} ${v.model}</div>
+                                <div class="vehicle-reg">${v.registration}</div>
+                            </div>
+                        </div>
+                        <div class="vehicle-details">
+                            <div class="detail-item">
+                                <div class="detail-label">Colour</div>
+                                <div class="detail-value">${v.colour || 'N/A'}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Year</div>
+                                <div class="detail-value">${v.year || 'N/A'}</div>
+                            </div>
+                            <div class="detail-item nct-due">
+                                <div class="detail-label">NCT Due</div>
+                                <div class="detail-value">${v.nct_due_date || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Slots
+            if (data.slots && data.slots.length > 0) {
+                // Get unique centres with earliest date
+                const centreMap = {};
+                data.slots.forEach(slot => {
+                    if (!centreMap[slot.centre] || slot.date < centreMap[slot.centre].date) {
+                        centreMap[slot.centre] = slot;
+                    }
+                });
+                const centres = Object.values(centreMap).sort((a, b) => a.date.localeCompare(b.date));
+
+                // Summary
+                const earliest = data.slots[0];
+                html += `
+                    <div class="summary">
+                        <div class="summary-title">Earliest Available</div>
+                        <div class="summary-content">
+                            ${earliest.centre} - ${earliest.date_formatted} (${earliest.days_away} days)
+                        </div>
+                    </div>
+                `;
+
+                // Slots by centre
+                html += `
+                    <div class="slots-header">
+                        <span class="slots-title">Available Centres</span>
+                        <span class="slots-count">${centres.length} centres</span>
+                    </div>
+                    <div class="slots-grid">
+                `;
+
+                centres.forEach(slot => {
+                    let urgencyClass = '';
+                    if (slot.days_away <= 7) urgencyClass = 'urgent';
+                    else if (slot.days_away <= 30) urgencyClass = 'soon';
+
+                    const selectedClass = slot.is_selected ? 'selected' : '';
+
+                    html += `
+                        <div class="slot-card ${urgencyClass} ${selectedClass}">
+                            <div class="slot-info">
+                                <div class="slot-centre">${slot.centre}</div>
+                                <div class="slot-date">${slot.date_formatted}</div>
+                            </div>
+                            <div class="slot-days">
+                                <span class="days-number">${slot.days_away}</span>
+                                <span class="days-label">days</span>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+
+                // Centre summary chips
+                html += `
+                    <div class="centre-summary">
+                        <div class="centre-summary-title">Quick Summary</div>
+                        <div class="centre-chips">
+                `;
+                centres.slice(0, 6).forEach(slot => {
+                    html += `
+                        <div class="centre-chip">
+                            <span>${slot.centre.split('(')[0].trim()}</span>
+                            <span class="centre-chip-date">${slot.days_away}d</span>
+                        </div>
+                    `;
+                });
+                html += '</div></div>';
+
+            } else {
+                html += `
+                    <div class="no-slots">
+                        <div class="no-slots-icon">&#x1F50D;</div>
+                        <p>No available slots found.</p>
+                        <p style="margin-top: 10px; font-size: 0.9rem;">Try again early morning (6-8 AM) for best availability.</p>
+                    </div>
+                `;
+            }
+
+            results.innerHTML = html;
+        }
+    </script>
+</body>
+</html>
