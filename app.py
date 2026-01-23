@@ -521,4 +521,4 @@ def start_alert_checker():
 
 if __name__ == '__main__':
     start_alert_checker()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=8081)
