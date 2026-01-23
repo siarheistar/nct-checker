@@ -12,7 +12,7 @@ jobs:
 
     env:
       REGISTRATION: ${{ vars.NCT_REGISTRATION || '05D77568' }}
-      BOOKING_ID: ${{ vars.NCT_BOOKING_ID || '' }}
+      BOOKING_ID: ${{ vars.NCT_BOOKING_ID || '81082214' }}
       ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
       SMTP_PASS: ${{ secrets.SMTP_PASS }}
@@ -159,8 +159,19 @@ jobs:
                       await page.locator('#confirmVehicleYes').click()
                       await page.wait_for_timeout(3000)
 
+                      # Check if vehicle has existing booking (reschedule page appears)
+                      reschedule_btn = page.locator('text=RESCHEDULE BOOKING').first
+                      has_existing_booking = await reschedule_btn.is_visible(timeout=2000)
+
+                      if has_existing_booking and not BOOKING_ID:
+                          # Vehicle has existing booking but no booking ID provided
+                          print("⚠️ Vehicle has existing booking but no BOOKING_ID configured!")
+                          print("Set NCT_BOOKING_ID in GitHub repo variables to use reschedule flow")
+                          vehicle_info['error'] = 'existing booking - needs booking id'
+                          return vehicle_info, booking_info, slots
+
                       # Check if reschedule flow is needed
-                      if is_reschedule:
+                      if is_reschedule and has_existing_booking:
                           # Look for RESCHEDULE BOOKING button
                           reschedule_btn = page.locator('text=RESCHEDULE BOOKING').first
                           if await reschedule_btn.is_visible(timeout=3000):
@@ -200,8 +211,8 @@ jobs:
                               if await yes_btn.is_visible(timeout=5000):
                                   await yes_btn.click()
                                   await page.wait_for_timeout(3000)
-                          else:
-                              print("No existing booking found - falling back to regular flow")
+                      elif is_reschedule and not has_existing_booking:
+                          print("No existing booking found - falling back to regular flow")
 
                       # Click "SEE MORE SUGGESTED CENTRES"
                       try:
@@ -399,23 +410,46 @@ jobs:
                   print("No slots found or error occurred")
                   # Send email even when no slots found
                   if ALERT_EMAIL:
-                      subject = f"❌ NCT Monitor: No slots found for {REGISTRATION}"
-                      html = f"""
-                      <html><body style="font-family: Arial, sans-serif; padding: 20px;">
-                          <h2>❌ NCT Slot Check Failed</h2>
-                          <p>No available slots found for registration <strong>{REGISTRATION}</strong>.</p>
-                          {'<p>Booking ID: <strong>' + BOOKING_ID + '</strong></p>' if BOOKING_ID else ''}
-                          <p>This could be due to:</p>
-                          <ul>
-                              <li>Website temporarily unavailable</li>
-                              <li>No slots currently in the system</li>
-                              <li>Registration number issue</li>
-                              {'<li>Invalid booking ID</li>' if BOOKING_ID else ''}
-                          </ul>
-                          <p><a href="https://www.ncts.ie">Check manually on NCTS.ie</a></p>
-                          <p style="color: #888; font-size: 12px;">Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
-                      </body></html>
-                      """
+                      # Check if this is the existing booking error
+                      needs_booking_id = not BOOKING_ID and 'existing booking' in str(vehicle_info.get('error', '')).lower()
+
+                      if needs_booking_id:
+                          subject = f"⚠️ NCT Monitor: Booking ID Required for {REGISTRATION}"
+                          html = f"""
+                          <html><body style="font-family: Arial, sans-serif; padding: 20px;">
+                              <h2>⚠️ Configuration Required</h2>
+                              <p>Vehicle <strong>{REGISTRATION}</strong> has an existing NCT booking.</p>
+                              <p>To check for earlier available slots, you need to configure your Booking ID:</p>
+                              <ol>
+                                  <li>Go to your GitHub repository</li>
+                                  <li>Navigate to Settings → Secrets and variables → Actions</li>
+                                  <li>Click the Variables tab</li>
+                                  <li>Add a new variable: <strong>NCT_BOOKING_ID</strong></li>
+                                  <li>Set the value to your booking confirmation number</li>
+                              </ol>
+                              <p>You can find your Booking ID in your NCT confirmation email.</p>
+                              <p><a href="https://www.ncts.ie">Check manually on NCTS.ie</a></p>
+                              <p style="color: #888; font-size: 12px;">Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
+                          </body></html>
+                          """
+                      else:
+                          subject = f"❌ NCT Monitor: No slots found for {REGISTRATION}"
+                          html = f"""
+                          <html><body style="font-family: Arial, sans-serif; padding: 20px;">
+                              <h2>❌ NCT Slot Check Failed</h2>
+                              <p>No available slots found for registration <strong>{REGISTRATION}</strong>.</p>
+                              {'<p>Booking ID: <strong>' + BOOKING_ID + '</strong></p>' if BOOKING_ID else ''}
+                              <p>This could be due to:</p>
+                              <ul>
+                                  <li>Website temporarily unavailable</li>
+                                  <li>No slots currently in the system</li>
+                                  <li>Registration number issue</li>
+                                  {'<li>Invalid booking ID</li>' if BOOKING_ID else ''}
+                              </ul>
+                              <p><a href="https://www.ncts.ie">Check manually on NCTS.ie</a></p>
+                              <p style="color: #888; font-size: 12px;">Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
+                          </body></html>
+                          """
                       send_alert_email(subject, html)
                   return
 

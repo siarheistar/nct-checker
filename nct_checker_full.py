@@ -577,7 +577,7 @@ def print_results(vehicle: Optional[VehicleInfo], slots: list[NCTSlot], output_j
 async def main():
     parser = argparse.ArgumentParser(description="NCT Availability Checker - Full Flow")
     parser.add_argument("--reg", "-r", default="05D77568", help="Vehicle registration number")
-    parser.add_argument("--booking-id", "-b", help="Existing booking ID (for reschedule flow)")
+    parser.add_argument("--booking-id", "-b", default="81082214", help="Existing booking ID (for reschedule flow)")
     parser.add_argument("--headless", action="store_true", default=True, help="Run headless (default)")
     parser.add_argument("--no-headless", dest="headless", action="store_false", help="Show browser window")
     parser.add_argument("--json", action="store_true", help="Output as JSON")

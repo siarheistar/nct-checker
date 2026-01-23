@@ -1,0 +1,24 @@
+# flyctl launch added from .gitignore
+# Python
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+**/.venv
+**/venv
+**/.env
+
+# IDE
+**/.vscode
+**/.idea
+
+# NCT specific
+**/nct_auth_state.json
+**/*.png
+
+# OS
+**/.DS_Store
+
+# flyctl launch added from .venv/.gitignore
+# Created by venv; see https://docs.python.org/3/library/venv.html
+.venv/**/*
+fly.toml
