@@ -91,9 +91,10 @@ class NCTChecker:
         max_retries = 2
 
         for attempt in range(max_retries):
+            browser = None
             try:
                 async with async_playwright() as p:
-                    # Use more conservative browser settings for Render
+                    # Ultra-light browser settings for Render free tier (512MB RAM)
                     browser = await p.chromium.launch(
                         headless=True,
                         args=[
@@ -104,20 +105,38 @@ class NCTChecker:
                             '--single-process',
                             '--no-zygote',
                             '--disable-extensions',
+                            '--disable-background-networking',
+                            '--disable-default-apps',
+                            '--disable-sync',
+                            '--disable-translate',
+                            '--hide-scrollbars',
+                            '--metrics-recording-only',
+                            '--mute-audio',
+                            '--no-first-run',
+                            '--safebrowsing-disable-auto-update',
+                            '--js-flags=--max-old-space-size=256',
                         ]
                     )
                     context = await browser.new_context(
-                        viewport={'width': 1280, 'height': 720},
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        viewport={'width': 1024, 'height': 768},
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        java_script_enabled=True,
+                        bypass_csp=True,
                     )
                     # Set longer default timeout
-                    context.set_default_timeout(60000)
+                    context.set_default_timeout(90000)
                     page = await context.new_page()
+
+                    # Block unnecessary resources to save memory
+                    await page.route("**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf}", lambda route: route.abort())
+                    await page.route("**/google*", lambda route: route.abort())
+                    await page.route("**/analytics*", lambda route: route.abort())
+                    await page.route("**/facebook*", lambda route: route.abort())
 
                     try:
                         # Step 1: Go to homepage with longer timeout
                         print(f"[Attempt {attempt + 1}] Loading NCTS homepage...")
-                        await page.goto(self.BASE_URL, wait_until='domcontentloaded', timeout=45000)
+                        await page.goto(self.BASE_URL, wait_until='domcontentloaded', timeout=60000)
                         await page.wait_for_timeout(2000)
 
                         # Handle cookie consent
