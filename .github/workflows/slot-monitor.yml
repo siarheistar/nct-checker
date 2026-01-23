@@ -1,0 +1,318 @@
+name: NCT Slot Monitor
+
+on:
+  schedule:
+    # Run every hour at minute 0
+    - cron: '0 * * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  check-slots:
+    runs-on: ubuntu-latest
+
+    env:
+      REGISTRATION: ${{ vars.NCT_REGISTRATION || '05D77568' }}
+      ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Check NCT availability and send alerts
+        run: |
+          python << 'PYTHON_SCRIPT'
+          import asyncio
+          import os
+          import re
+          import smtplib
+          from email.mime.text import MIMEText
+          from email.mime.multipart import MIMEMultipart
+          from datetime import datetime
+          from playwright.async_api import async_playwright
+
+          REGISTRATION = os.environ.get('REGISTRATION', '05D77568')
+          ALERT_EMAIL = os.environ.get('ALERT_EMAIL', '')
+          SMTP_USER = os.environ.get('SMTP_USER', '')
+          SMTP_PASS = os.environ.get('SMTP_PASS', '')
+
+          # Thresholds for alerts (in days)
+          URGENT_THRESHOLD = 7
+          SOON_THRESHOLD = 30
+
+          def parse_date(date_str):
+              """Parse date formats like '28th May 2026'"""
+              date_str = date_str.strip()
+              date_str = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', date_str)
+              formats = ["%d %B %Y", "%d %b %Y", "%d/%m/%Y"]
+              for fmt in formats:
+                  try:
+                      return datetime.strptime(date_str, fmt)
+                  except ValueError:
+                      continue
+              return None
+
+          def send_alert_email(subject, html_content):
+              """Send email alert"""
+              if not SMTP_USER or not SMTP_PASS or not ALERT_EMAIL:
+                  print("Email not configured - skipping")
+                  return False
+
+              try:
+                  msg = MIMEMultipart('alternative')
+                  msg['Subject'] = subject
+                  msg['From'] = SMTP_USER
+                  msg['To'] = ALERT_EMAIL
+                  msg.attach(MIMEText(html_content, 'html'))
+
+                  with smtplib.SMTP('smtp.gmail.com', 587) as server:
+                      server.starttls()
+                      server.login(SMTP_USER, SMTP_PASS)
+                      server.sendmail(SMTP_USER, ALERT_EMAIL, msg.as_string())
+
+                  print(f"Alert email sent to {ALERT_EMAIL}")
+                  return True
+              except Exception as e:
+                  print(f"Failed to send email: {e}")
+                  return False
+
+          async def check_nct_availability():
+              """Check NCT availability"""
+              slots = []
+              vehicle_info = {}
+
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch(headless=True)
+                  context = await browser.new_context(
+                      viewport={'width': 1920, 'height': 1080},
+                      user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  )
+                  page = await context.new_page()
+
+                  try:
+                      print(f"Checking NCT availability for {REGISTRATION}...")
+
+                      # Go to homepage
+                      await page.goto("https://www.ncts.ie", wait_until='networkidle', timeout=30000)
+                      await page.wait_for_timeout(1000)
+
+                      # Handle cookie consent
+                      try:
+                          accept_btn = page.locator('#bs-gdpr-cookies-modal-accept-btn')
+                          if await accept_btn.is_visible(timeout=3000):
+                              await accept_btn.click()
+                              await page.wait_for_timeout(1000)
+                      except Exception:
+                          pass
+
+                      # Enter registration
+                      await page.locator('#rid').fill(REGISTRATION)
+                      await page.wait_for_timeout(500)
+                      await page.locator('#btnSearchVehicle').click()
+
+                      # Wait for vehicle confirmation page
+                      await page.wait_for_url('**rid=**', timeout=15000)
+                      await page.wait_for_timeout(2000)
+
+                      # Extract vehicle info
+                      page_text = await page.inner_text('body')
+                      patterns = {
+                          'make': r'Make[:\s]+([A-Z]+)',
+                          'model': r'Model[:\s]+([A-Z0-9\s]+?)(?=\s*Year|\s*$)',
+                          'year': r'Year[:\s]+(\d{4})',
+                          'nct_due_date': r'(?:Next )?NCT Due Date[:\s]+(\d{2}/\d{2}/\d{4})',
+                      }
+                      for field, pattern in patterns.items():
+                          match = re.search(pattern, page_text, re.I)
+                          if match:
+                              vehicle_info[field] = match.group(1).strip()
+
+                      # Check checkboxes and confirm
+                      checkboxes = page.locator('input[type="checkbox"]')
+                      for i in range(await checkboxes.count()):
+                          cb = checkboxes.nth(i)
+                          if not await cb.is_checked():
+                              await cb.check()
+                              await page.wait_for_timeout(200)
+
+                      await page.locator('#confirmVehicleYes').click()
+                      await page.wait_for_timeout(3000)
+
+                      # Click "SEE MORE SUGGESTED CENTRES"
+                      try:
+                          see_more = page.locator('text=SEE MORE SUGGESTED CENTRES')
+                          if await see_more.is_visible(timeout=3000):
+                              await see_more.click()
+                              await page.wait_for_timeout(2000)
+                      except Exception:
+                          pass
+
+                      # Extract availability
+                      await page.wait_for_selector('text=Other Suggested Centre', timeout=10000)
+                      page_text = await page.inner_text('body')
+
+                      # Extract selected centre
+                      centre_match = re.search(r'SELECTED CENTRE\s*\n\s*([^\n]+)', page_text)
+                      selected_centre = centre_match.group(1).strip() if centre_match else ""
+
+                      # Extract date for selected centre
+                      date_match = re.search(r'NEXT AVAILABLE DATE\s*\n?\s*(\d+(?:st|nd|rd|th)?\s+\w+\s+\d{4})', page_text)
+                      if date_match and selected_centre:
+                          parsed_date = parse_date(date_match.group(1))
+                          if parsed_date:
+                              days_away = (parsed_date - datetime.now()).days
+                              slots.append({
+                                  'centre': selected_centre,
+                                  'date': parsed_date,
+                                  'date_formatted': parsed_date.strftime('%a %d %b %Y'),
+                                  'days_away': days_away
+                              })
+
+                      # Extract other centres
+                      lines = page_text.split('\n')
+                      for line in lines:
+                          line = line.strip()
+                          match = re.match(r'^([A-Za-z\s\d\(\),]+?)\t+(\d+(?:st|nd|rd|th)?\s+\w+\s+\d{4})', line)
+                          if match:
+                              centre = match.group(1).strip()
+                              date_str = match.group(2)
+                              if 'Other Suggested' in centre or 'Next Available' in centre:
+                                  continue
+                              parsed_date = parse_date(date_str)
+                              if parsed_date and centre:
+                                  days_away = (parsed_date - datetime.now()).days
+                                  slots.append({
+                                      'centre': centre,
+                                      'date': parsed_date,
+                                      'date_formatted': parsed_date.strftime('%a %d %b %Y'),
+                                      'days_away': days_away
+                                  })
+
+                  except Exception as e:
+                      print(f"Error: {e}")
+                  finally:
+                      await browser.close()
+
+              # Sort by date
+              slots.sort(key=lambda x: x['date'])
+              return vehicle_info, slots
+
+          def generate_alert_email(vehicle_info, slots, alert_type):
+              """Generate HTML email for alerts"""
+              urgent_color = "#ff6b6b" if alert_type == "urgent" else "#ffa726"
+              title = "URGENT: NCT Slot Available!" if alert_type == "urgent" else "NCT Slot Available Soon!"
+
+              vehicle_desc = f"{vehicle_info.get('year', '')} {vehicle_info.get('make', '')} {vehicle_info.get('model', '')}"
+
+              slots_html = ""
+              for slot in slots[:5]:  # Show top 5
+                  slots_html += f"""
+                  <tr>
+                      <td style="padding: 12px; border-bottom: 1px solid #eee;">{slot['centre']}</td>
+                      <td style="padding: 12px; border-bottom: 1px solid #eee;">{slot['date_formatted']}</td>
+                      <td style="padding: 12px; border-bottom: 1px solid #eee; font-weight: bold; color: {urgent_color};">{slot['days_away']} days</td>
+                  </tr>
+                  """
+
+              html = f"""
+              <html>
+              <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0;">
+                      <h1 style="margin: 0; color: #ffd700;">{title}</h1>
+                      <p style="margin: 10px 0 0 0; opacity: 0.9;">Registration: {REGISTRATION}</p>
+                  </div>
+
+                  <div style="padding: 30px; background: #f5f5f5; border-radius: 0 0 12px 12px;">
+                      <p style="font-size: 16px; margin-bottom: 20px;">
+                          Good news! Earlier NCT slots are now available for your <strong>{vehicle_desc}</strong>.
+                      </p>
+
+                      <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
+                          <thead>
+                              <tr style="background: #1a1a2e; color: white;">
+                                  <th style="padding: 12px; text-align: left;">Centre</th>
+                                  <th style="padding: 12px; text-align: left;">Date</th>
+                                  <th style="padding: 12px; text-align: left;">Days Away</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              {slots_html}
+                          </tbody>
+                      </table>
+
+                      <p style="margin-top: 25px;">
+                          <a href="https://www.ncts.ie" style="display: inline-block; background: #ffd700; color: #1a1a2e; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                              Book Now on NCTS.ie
+                          </a>
+                      </p>
+
+                      <p style="color: #888; font-size: 12px; margin-top: 30px;">
+                          NCT Due Date: {vehicle_info.get('nct_due_date', 'Unknown')}<br>
+                          Checked at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
+                      </p>
+                  </div>
+              </body>
+              </html>
+              """
+              return html
+
+          async def main():
+              print(f"=== NCT Slot Monitor ===")
+              print(f"Registration: {REGISTRATION}")
+              print(f"Alert Email: {ALERT_EMAIL or 'Not configured'}")
+              print(f"Urgent threshold: {URGENT_THRESHOLD} days")
+              print(f"Soon threshold: {SOON_THRESHOLD} days")
+              print()
+
+              vehicle_info, slots = await check_nct_availability()
+
+              if not slots:
+                  print("No slots found or error occurred")
+                  return
+
+              print(f"\nFound {len(slots)} available slots:")
+              for slot in slots[:10]:
+                  print(f"  - {slot['centre']}: {slot['date_formatted']} ({slot['days_away']} days)")
+
+              earliest = slots[0]
+              print(f"\nEarliest: {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days)")
+
+              # Check for urgent slots (within 7 days)
+              urgent_slots = [s for s in slots if s['days_away'] <= URGENT_THRESHOLD]
+              if urgent_slots:
+                  print(f"\n🚨 URGENT: {len(urgent_slots)} slot(s) within {URGENT_THRESHOLD} days!")
+                  subject = f"🚨 URGENT NCT Alert: Slot in {urgent_slots[0]['days_away']} days for {REGISTRATION}!"
+                  html = generate_alert_email(vehicle_info, urgent_slots, "urgent")
+                  send_alert_email(subject, html)
+
+              # Check for soon slots (within 30 days)
+              elif earliest['days_away'] <= SOON_THRESHOLD:
+                  soon_slots = [s for s in slots if s['days_away'] <= SOON_THRESHOLD]
+                  print(f"\n📅 {len(soon_slots)} slot(s) within {SOON_THRESHOLD} days")
+                  subject = f"📅 NCT Alert: Slot in {earliest['days_away']} days for {REGISTRATION}"
+                  html = generate_alert_email(vehicle_info, soon_slots, "soon")
+                  send_alert_email(subject, html)
+
+              else:
+                  print(f"\n✓ No urgent slots - earliest is {earliest['days_away']} days away")
+
+              # Output summary for GitHub Actions
+              print(f"\n::notice::Earliest NCT slot: {earliest['centre']} on {earliest['date_formatted']} ({earliest['days_away']} days)")
+
+          asyncio.run(main())
+          PYTHON_SCRIPT
