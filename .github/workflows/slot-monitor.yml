@@ -12,6 +12,7 @@ jobs:
 
     env:
       REGISTRATION: ${{ vars.NCT_REGISTRATION || '05D77568' }}
+      BOOKING_ID: ${{ vars.NCT_BOOKING_ID || '' }}
       ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
       SMTP_PASS: ${{ secrets.SMTP_PASS }}
@@ -47,6 +48,7 @@ jobs:
           from playwright.async_api import async_playwright
 
           REGISTRATION = os.environ.get('REGISTRATION', '05D77568')
+          BOOKING_ID = os.environ.get('BOOKING_ID', '')
           ALERT_EMAIL = os.environ.get('ALERT_EMAIL', '')
           SMTP_USER = os.environ.get('SMTP_USER', '')
           SMTP_PASS = os.environ.get('SMTP_PASS', '')
@@ -92,9 +94,11 @@ jobs:
                   return False
 
           async def check_nct_availability():
-              """Check NCT availability"""
+              """Check NCT availability - supports both new booking and reschedule flows"""
               slots = []
               vehicle_info = {}
+              booking_info = {}
+              is_reschedule = bool(BOOKING_ID)
 
               async with async_playwright() as p:
                   browser = await p.chromium.launch(headless=True)
@@ -106,6 +110,8 @@ jobs:
 
                   try:
                       print(f"Checking NCT availability for {REGISTRATION}...")
+                      if is_reschedule:
+                          print(f"Using RESCHEDULE flow with Booking ID: {BOOKING_ID}")
 
                       # Go to homepage
                       await page.goto("https://www.ncts.ie", wait_until='networkidle', timeout=30000)
@@ -152,6 +158,50 @@ jobs:
 
                       await page.locator('#confirmVehicleYes').click()
                       await page.wait_for_timeout(3000)
+
+                      # Check if reschedule flow is needed
+                      if is_reschedule:
+                          # Look for RESCHEDULE BOOKING button
+                          reschedule_btn = page.locator('text=RESCHEDULE BOOKING').first
+                          if await reschedule_btn.is_visible(timeout=3000):
+                              print("Existing booking detected - using reschedule flow")
+                              await reschedule_btn.click()
+                              await page.wait_for_timeout(2000)
+
+                              # Enter Booking ID
+                              print(f"Entering booking ID: {BOOKING_ID}")
+                              booking_input = page.locator('input[type="text"]').first
+                              await booking_input.wait_for(state='visible', timeout=10000)
+                              await booking_input.fill(BOOKING_ID)
+                              await page.wait_for_timeout(500)
+
+                              # Click Reschedule Booking button to submit
+                              confirm_btn = page.locator('text=RESCHEDULE BOOKING').last
+                              await confirm_btn.click()
+                              await page.wait_for_timeout(3000)
+
+                              # Extract current booking info
+                              page_text = await page.inner_text('body')
+                              booking_patterns = {
+                                  'centre': r'NCT Centre[:\s]+([^\n]+)',
+                                  'date': r'Date[:\s]+([^\n]+)',
+                                  'time': r'Time[:\s]+(\d{1,2}:\d{2})',
+                              }
+                              for field, pattern in booking_patterns.items():
+                                  match = re.search(pattern, page_text, re.I)
+                                  if match:
+                                      booking_info[field] = match.group(1).strip()
+                              booking_info['booking_id'] = BOOKING_ID
+
+                              print(f"Current booking: {booking_info}")
+
+                              # Click YES to confirm booking
+                              yes_btn = page.locator('text=YES').last
+                              if await yes_btn.is_visible(timeout=5000):
+                                  await yes_btn.click()
+                                  await page.wait_for_timeout(3000)
+                          else:
+                              print("No existing booking found - falling back to regular flow")
 
                       # Click "SEE MORE SUGGESTED CENTRES"
                       try:
@@ -210,25 +260,42 @@ jobs:
 
               # Sort by date
               slots.sort(key=lambda x: x['date'])
-              return vehicle_info, slots
+              return vehicle_info, booking_info, slots
 
-          def generate_status_email(vehicle_info, slots, alert_type):
+          def generate_status_email(vehicle_info, booking_info, slots, alert_type):
               """Generate HTML email for all status types including info"""
+              is_reschedule = bool(booking_info)
+
               if alert_type == "urgent":
                   header_color = "#dc3545"
-                  title = "🚨 URGENT: NCT Slot Available!"
+                  title = "🚨 URGENT: Earlier NCT Slot Available!" if is_reschedule else "🚨 URGENT: NCT Slot Available!"
                   subtitle = "Book immediately - slot may be taken!"
               elif alert_type == "soon":
                   header_color = "#fd7e14"
-                  title = "📅 NCT Slot Available Soon!"
+                  title = "📅 Earlier NCT Slot Available!" if is_reschedule else "📅 NCT Slot Available Soon!"
                   subtitle = "Good availability within 30 days"
               else:  # info
                   header_color = "#28a745"
-                  title = "✅ NCT Slot Status Update"
+                  title = "✅ NCT Reschedule Status" if is_reschedule else "✅ NCT Slot Status Update"
                   subtitle = "Regular monitoring report"
 
               vehicle_desc = f"{vehicle_info.get('year', '')} {vehicle_info.get('make', '')} {vehicle_info.get('model', '')}".strip()
               earliest = slots[0] if slots else None
+
+              # Current booking section (for reschedule)
+              booking_html = ""
+              if is_reschedule:
+                  booking_html = f"""
+                  <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                      <strong style="color: #856404;">📋 Current Booking:</strong><br>
+                      <span style="color: #856404;">
+                          Centre: {booking_info.get('centre', 'N/A')}<br>
+                          Date: {booking_info.get('date', 'N/A')}<br>
+                          Time: {booking_info.get('time', 'N/A')}<br>
+                          Booking ID: {booking_info.get('booking_id', 'N/A')}
+                      </span>
+                  </div>
+                  """
 
               slots_html = ""
               for slot in slots[:5]:
@@ -250,7 +317,7 @@ jobs:
               # Status summary
               urgent_count = len([s for s in slots if s['days_away'] <= 7])
               soon_count = len([s for s in slots if s['days_away'] <= 30])
-              
+
               if urgent_count > 0:
                   status_text = f"🚨 URGENT: {urgent_count} slot(s) within 7 days!"
                   status_color = "#dc3545"
@@ -278,8 +345,10 @@ jobs:
                           <strong>📋 NCT Due:</strong> {vehicle_info.get('nct_due_date', 'Unknown')}
                       </div>
 
+                      {booking_html}
+
                       <div style="background: {status_color}15; border-left: 4px solid {status_color}; padding: 15px; margin-bottom: 20px;">
-                          <strong style="color: {status_color};">Earliest:</strong> {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days)<br>
+                          <strong style="color: {status_color};">{'Earliest for Reschedule' if is_reschedule else 'Earliest'}:</strong> {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days)<br>
                           <span style="color: {status_color};">{status_text}</span>
                       </div>
 
@@ -298,14 +367,14 @@ jobs:
 
                       <p style="margin-top: 25px; text-align: center;">
                           <a href="https://www.ncts.ie" style="display: inline-block; background: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
-                              🔗 Book Now on NCTS.ie
+                              🔗 {'Reschedule' if is_reschedule else 'Book'} Now on NCTS.ie
                           </a>
                       </p>
 
                       <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;">
-                      
+
                       <p style="color: #6c757d; font-size: 12px; text-align: center; margin: 0;">
-                          📊 Total slots found: {len(slots)} | Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC<br>
+                          📊 Total slots found: {len(slots)} | Mode: {'Reschedule' if is_reschedule else 'New Booking'} | Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC<br>
                           This is an automated hourly check. Reply to unsubscribe.
                       </p>
                   </div>
@@ -317,12 +386,14 @@ jobs:
           async def main():
               print(f"=== NCT Slot Monitor ===")
               print(f"Registration: {REGISTRATION}")
+              print(f"Booking ID: {BOOKING_ID or 'Not set (new booking flow)'}")
               print(f"Alert Email: {ALERT_EMAIL or 'Not configured'}")
               print(f"Urgent threshold: {URGENT_THRESHOLD} days")
               print(f"Soon threshold: {SOON_THRESHOLD} days")
               print()
 
-              vehicle_info, slots = await check_nct_availability()
+              vehicle_info, booking_info, slots = await check_nct_availability()
+              is_reschedule = bool(booking_info)
 
               if not slots:
                   print("No slots found or error occurred")
@@ -333,11 +404,13 @@ jobs:
                       <html><body style="font-family: Arial, sans-serif; padding: 20px;">
                           <h2>❌ NCT Slot Check Failed</h2>
                           <p>No available slots found for registration <strong>{REGISTRATION}</strong>.</p>
+                          {'<p>Booking ID: <strong>' + BOOKING_ID + '</strong></p>' if BOOKING_ID else ''}
                           <p>This could be due to:</p>
                           <ul>
                               <li>Website temporarily unavailable</li>
                               <li>No slots currently in the system</li>
                               <li>Registration number issue</li>
+                              {'<li>Invalid booking ID</li>' if BOOKING_ID else ''}
                           </ul>
                           <p><a href="https://www.ncts.ie">Check manually on NCTS.ie</a></p>
                           <p style="color: #888; font-size: 12px;">Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
@@ -350,25 +423,30 @@ jobs:
               for slot in slots[:10]:
                   print(f"  - {slot['centre']}: {slot['date_formatted']} ({slot['days_away']} days)")
 
+              if is_reschedule:
+                  print(f"\nCurrent booking: {booking_info.get('centre', 'N/A')} on {booking_info.get('date', 'N/A')}")
+
               earliest = slots[0]
-              print(f"\nEarliest: {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days)")
+              print(f"\nEarliest available: {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days)")
 
               # Determine alert type and send email
               urgent_slots = [s for s in slots if s['days_away'] <= URGENT_THRESHOLD]
               soon_slots = [s for s in slots if s['days_away'] <= SOON_THRESHOLD]
 
+              mode_prefix = "Reschedule" if is_reschedule else "NCT"
+
               if urgent_slots:
                   print(f"\n🚨 URGENT: {len(urgent_slots)} slot(s) within {URGENT_THRESHOLD} days!")
-                  subject = f"🚨 URGENT NCT: {earliest['centre']} in {earliest['days_away']} days! [{REGISTRATION}]"
-                  html = generate_status_email(vehicle_info, slots, "urgent")
+                  subject = f"🚨 URGENT {mode_prefix}: {earliest['centre']} in {earliest['days_away']} days! [{REGISTRATION}]"
+                  html = generate_status_email(vehicle_info, booking_info, slots, "urgent")
               elif soon_slots:
                   print(f"\n📅 {len(soon_slots)} slot(s) within {SOON_THRESHOLD} days")
-                  subject = f"📅 NCT Alert: {earliest['centre']} in {earliest['days_away']} days [{REGISTRATION}]"
-                  html = generate_status_email(vehicle_info, slots, "soon")
+                  subject = f"📅 {mode_prefix} Alert: {earliest['centre']} in {earliest['days_away']} days [{REGISTRATION}]"
+                  html = generate_status_email(vehicle_info, booking_info, slots, "soon")
               else:
                   print(f"\n✓ No urgent slots - earliest is {earliest['days_away']} days away")
-                  subject = f"✅ NCT Status: {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days) [{REGISTRATION}]"
-                  html = generate_status_email(vehicle_info, slots, "info")
+                  subject = f"✅ {mode_prefix} Status: {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days) [{REGISTRATION}]"
+                  html = generate_status_email(vehicle_info, booking_info, slots, "info")
 
               # Always send email
               send_alert_email(subject, html)
