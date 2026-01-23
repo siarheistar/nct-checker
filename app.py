@@ -169,7 +169,7 @@ class NCTChecker:
                         # Extract availability
                         print(f"[Attempt {attempt + 1}] Extracting availability...")
                         slots = await self._extract_availability(page)
-                        
+
                         # Success - break retry loop
                         error = None
                         break
@@ -177,18 +177,18 @@ class NCTChecker:
                     except PlaywrightTimeout as e:
                         print(f"[Attempt {attempt + 1}] Timeout: {e}")
                         if attempt < max_retries - 1:
-                            print(f"Retrying...")
+                            print("Retrying...")
                             continue
                         error = "Timeout - the NCTS website took too long to respond. Please try again."
                     except Exception as e:
                         print(f"[Attempt {attempt + 1}] Error: {e}")
                         if attempt < max_retries - 1:
-                            print(f"Retrying...")
+                            print("Retrying...")
                             continue
                         error = f"Error checking availability: {str(e)}"
                     finally:
                         await browser.close()
-                        
+
             except Exception as e:
                 print(f"[Attempt {attempt + 1}] Browser error: {e}")
                 if attempt < max_retries - 1:
