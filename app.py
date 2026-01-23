@@ -7,7 +7,6 @@ With email notifications for earlier slot availability
 import asyncio
 import re
 import os
-import json
 import smtplib
 import threading
 import time
@@ -109,7 +108,7 @@ class NCTChecker:
                     if await accept_btn.is_visible(timeout=3000):
                         await accept_btn.click()
                         await page.wait_for_timeout(1000)
-                except:
+                except Exception:
                     pass
 
                 # Enter registration
@@ -141,7 +140,7 @@ class NCTChecker:
                     if await see_more.is_visible(timeout=3000):
                         await see_more.click()
                         await page.wait_for_timeout(2000)
-                except:
+                except Exception:
                     pass
 
                 # Extract availability
@@ -183,7 +182,7 @@ class NCTChecker:
                     setattr(info, field, match.group(1).strip())
 
             return info
-        except:
+        except Exception:
             return None
 
     async def _extract_availability(self, page) -> list[NCTSlot]:
