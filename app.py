@@ -88,70 +88,112 @@ class NCTChecker:
         slots = []
         vehicle_info = None
         error = None
+        max_retries = 2
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            )
-            page = await context.new_page()
-
+        for attempt in range(max_retries):
             try:
-                # Step 1: Go to homepage
-                await page.goto(self.BASE_URL, wait_until='networkidle', timeout=30000)
-                await page.wait_for_timeout(1000)
+                async with async_playwright() as p:
+                    # Use more conservative browser settings for Render
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=[
+                            '--no-sandbox',
+                            '--disable-setuid-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-gpu',
+                            '--single-process',
+                            '--no-zygote',
+                            '--disable-extensions',
+                        ]
+                    )
+                    context = await browser.new_context(
+                        viewport={'width': 1280, 'height': 720},
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    )
+                    # Set longer default timeout
+                    context.set_default_timeout(60000)
+                    page = await context.new_page()
 
-                # Handle cookie consent
-                try:
-                    accept_btn = page.locator('#bs-gdpr-cookies-modal-accept-btn')
-                    if await accept_btn.is_visible(timeout=3000):
-                        await accept_btn.click()
-                        await page.wait_for_timeout(1000)
-                except Exception:
-                    pass
-
-                # Enter registration
-                await page.locator('#rid').fill(self.registration)
-                await page.wait_for_timeout(500)
-                await page.locator('#btnSearchVehicle').click()
-
-                # Wait for vehicle confirmation page
-                await page.wait_for_url('**rid=**', timeout=15000)
-                await page.wait_for_timeout(2000)
-
-                # Extract vehicle info
-                vehicle_info = await self._extract_vehicle_info(page)
-
-                # Check checkboxes and confirm
-                checkboxes = page.locator('input[type="checkbox"]')
-                for i in range(await checkboxes.count()):
-                    cb = checkboxes.nth(i)
-                    if not await cb.is_checked():
-                        await cb.check()
-                        await page.wait_for_timeout(200)
-
-                await page.locator('#confirmVehicleYes').click()
-                await page.wait_for_timeout(3000)
-
-                # Click "SEE MORE SUGGESTED CENTRES" if available
-                try:
-                    see_more = page.locator('text=SEE MORE SUGGESTED CENTRES')
-                    if await see_more.is_visible(timeout=3000):
-                        await see_more.click()
+                    try:
+                        # Step 1: Go to homepage with longer timeout
+                        print(f"[Attempt {attempt + 1}] Loading NCTS homepage...")
+                        await page.goto(self.BASE_URL, wait_until='domcontentloaded', timeout=45000)
                         await page.wait_for_timeout(2000)
-                except Exception:
-                    pass
 
-                # Extract availability
-                slots = await self._extract_availability(page)
+                        # Handle cookie consent
+                        try:
+                            accept_btn = page.locator('#bs-gdpr-cookies-modal-accept-btn')
+                            if await accept_btn.is_visible(timeout=5000):
+                                await accept_btn.click()
+                                await page.wait_for_timeout(1000)
+                        except Exception:
+                            pass
 
-            except PlaywrightTimeout:
-                error = "Timeout - the NCTS website took too long to respond. Please try again."
+                        # Enter registration
+                        print(f"[Attempt {attempt + 1}] Entering registration: {self.registration}")
+                        reg_input = page.locator('#rid')
+                        await reg_input.wait_for(state='visible', timeout=10000)
+                        await reg_input.fill(self.registration)
+                        await page.wait_for_timeout(500)
+                        await page.locator('#btnSearchVehicle').click()
+
+                        # Wait for vehicle confirmation page
+                        print(f"[Attempt {attempt + 1}] Waiting for vehicle confirmation...")
+                        await page.wait_for_url('**rid=**', timeout=30000)
+                        await page.wait_for_timeout(2000)
+
+                        # Extract vehicle info
+                        vehicle_info = await self._extract_vehicle_info(page)
+
+                        # Check checkboxes and confirm
+                        checkboxes = page.locator('input[type="checkbox"]')
+                        for i in range(await checkboxes.count()):
+                            cb = checkboxes.nth(i)
+                            if not await cb.is_checked():
+                                await cb.check()
+                                await page.wait_for_timeout(200)
+
+                        print(f"[Attempt {attempt + 1}] Confirming vehicle...")
+                        await page.locator('#confirmVehicleYes').click()
+                        await page.wait_for_timeout(3000)
+
+                        # Click "SEE MORE SUGGESTED CENTRES" if available
+                        try:
+                            see_more = page.locator('text=SEE MORE SUGGESTED CENTRES')
+                            if await see_more.is_visible(timeout=5000):
+                                await see_more.click()
+                                await page.wait_for_timeout(2000)
+                        except Exception:
+                            pass
+
+                        # Extract availability
+                        print(f"[Attempt {attempt + 1}] Extracting availability...")
+                        slots = await self._extract_availability(page)
+                        
+                        # Success - break retry loop
+                        error = None
+                        break
+
+                    except PlaywrightTimeout as e:
+                        print(f"[Attempt {attempt + 1}] Timeout: {e}")
+                        if attempt < max_retries - 1:
+                            print(f"Retrying...")
+                            continue
+                        error = "Timeout - the NCTS website took too long to respond. Please try again."
+                    except Exception as e:
+                        print(f"[Attempt {attempt + 1}] Error: {e}")
+                        if attempt < max_retries - 1:
+                            print(f"Retrying...")
+                            continue
+                        error = f"Error checking availability: {str(e)}"
+                    finally:
+                        await browser.close()
+                        
             except Exception as e:
-                error = f"Error checking availability: {str(e)}"
-            finally:
-                await browser.close()
+                print(f"[Attempt {attempt + 1}] Browser error: {e}")
+                if attempt < max_retries - 1:
+                    continue
+                error = f"Browser error: {str(e)}"
 
         return {
             "success": error is None,
