@@ -316,6 +316,134 @@
             margin-bottom: 15px;
         }
 
+        /* Reschedule Card Styles */
+        .reschedule-card {
+            background: linear-gradient(135deg, rgba(255, 183, 0, 0.15) 0%, rgba(255, 140, 0, 0.1) 100%);
+            border: 1px solid rgba(255, 183, 0, 0.3);
+            border-radius: 16px;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .reschedule-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+
+        .reschedule-card h3 {
+            color: #ffd700;
+            font-size: 1.3rem;
+            margin-bottom: 10px;
+        }
+
+        .reschedule-card p {
+            color: #a0a0a0;
+            margin-bottom: 20px;
+        }
+
+        .reschedule-form {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .booking-input {
+            padding: 14px 20px;
+            font-size: 1rem;
+            border: 2px solid rgba(255, 215, 0, 0.3);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            min-width: 220px;
+            text-align: center;
+            letter-spacing: 1px;
+        }
+
+        .booking-input:focus {
+            outline: none;
+            border-color: #ffd700;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .booking-input::placeholder {
+            color: #666;
+            letter-spacing: normal;
+        }
+
+        .btn-reschedule {
+            background: linear-gradient(135deg, #ff9800 0%, #ff6d00 100%);
+            color: white;
+            padding: 14px 28px;
+        }
+
+        .btn-reschedule:hover:not(:disabled) {
+            box-shadow: 0 10px 30px rgba(255, 152, 0, 0.3);
+        }
+
+        .reschedule-hint {
+            font-size: 0.85rem;
+            color: #888 !important;
+            margin-bottom: 0 !important;
+        }
+
+        /* Current booking info card */
+        .booking-card {
+            background: linear-gradient(135deg, rgba(255, 152, 0, 0.15) 0%, rgba(255, 87, 34, 0.1) 100%);
+            border: 1px solid rgba(255, 152, 0, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .booking-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+
+        .booking-icon {
+            font-size: 2rem;
+        }
+
+        .booking-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #ff9800;
+        }
+
+        .booking-subtitle {
+            font-size: 0.85rem;
+            color: #a0a0a0;
+        }
+
+        .booking-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+        }
+
+        .booking-detail {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px 14px;
+            border-radius: 8px;
+        }
+
+        .booking-detail-label {
+            font-size: 0.7rem;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+
+        .booking-detail-value {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #ff9800;
+        }
+
         .summary {
             background: linear-gradient(135deg, rgba(255, 215, 0, 0.15) 0%, rgba(255, 183, 0, 0.1) 100%);
             border: 1px solid rgba(255, 215, 0, 0.3);
@@ -569,6 +697,14 @@
             if (e.key === 'Enter') checkAvailability();
         });
 
+        // Handle Enter key in booking ID field (delegated event)
+        document.addEventListener('keypress', (e) => {
+            if (e.target.id === 'bookingId' && e.key === 'Enter') {
+                const registration = regInput.value.trim();
+                if (registration) checkReschedule(registration);
+            }
+        });
+
         async function checkAvailability() {
             const registration = regInput.value.trim();
 
@@ -737,11 +873,210 @@
                     </div>
                 `;
 
+            } else if (data.has_existing_booking) {
+                // Show reschedule form for existing bookings
+                html += `
+                    <div class="reschedule-card">
+                        <div class="reschedule-icon">&#x1F4C5;</div>
+                        <h3>Existing Booking Found</h3>
+                        <p>${data.message || 'This vehicle has an existing booking. Enter your Booking ID to search for earlier slots.'}</p>
+                        <div class="reschedule-form">
+                            <input type="text" id="bookingId" class="booking-input" placeholder="Enter Booking ID (e.g., 81082214)" maxlength="15">
+                            <button class="btn-reschedule" onclick="checkReschedule('${data.registration}')">Find Earlier Slots</button>
+                        </div>
+                        <p class="reschedule-hint">&#x1F4A1; You can find your Booking ID in your confirmation email or on the NCTS website.</p>
+                    </div>
+                `;
             } else {
                 html += `
                     <div class="no-slots">
                         <div class="no-slots-icon">&#x1F50D;</div>
                         <p>No available slots found.</p>
+                        <p style="margin-top: 10px; font-size: 0.9rem;">Try again early morning (6-8 AM) for best availability.</p>
+                    </div>
+                `;
+            }
+
+            results.innerHTML = html;
+        }
+
+        async function checkReschedule(registration) {
+            const bookingId = document.getElementById('bookingId').value.trim();
+
+            if (!bookingId) {
+                alert('Please enter your Booking ID');
+                return;
+            }
+
+            checkBtn.disabled = true;
+            loading.classList.add('active');
+            results.classList.remove('active');
+
+            try {
+                const response = await fetch('/api/reschedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ registration, booking_id: bookingId })
+                });
+
+                const data = await response.json();
+                displayRescheduleResults(data);
+            } catch (error) {
+                results.innerHTML = `
+                    <div class="error-card">
+                        <p>Failed to check reschedule availability. Please try again.</p>
+                    </div>
+                `;
+            } finally {
+                checkBtn.disabled = false;
+                loading.classList.remove('active');
+                results.classList.add('active');
+            }
+        }
+
+        function displayRescheduleResults(data) {
+            if (!data.success) {
+                results.innerHTML = `
+                    <div class="error-card">
+                        <p>${data.error}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+
+            // Vehicle info
+            if (data.vehicle) {
+                const v = data.vehicle;
+                html += `
+                    <div class="vehicle-card">
+                        <div class="vehicle-header">
+                            <span class="vehicle-icon">&#x1F697;</span>
+                            <div>
+                                <div class="vehicle-title">${v.year} ${v.make} ${v.model}</div>
+                                <div class="vehicle-reg">${v.registration}</div>
+                            </div>
+                        </div>
+                        <div class="vehicle-details">
+                            <div class="detail-item">
+                                <div class="detail-label">Colour</div>
+                                <div class="detail-value">${v.colour || 'N/A'}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Year</div>
+                                <div class="detail-value">${v.year || 'N/A'}</div>
+                            </div>
+                            <div class="detail-item nct-due">
+                                <div class="detail-label">NCT Due</div>
+                                <div class="detail-value">${v.nct_due_date || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Current booking info
+            if (data.booking) {
+                const b = data.booking;
+                html += `
+                    <div class="booking-card">
+                        <div class="booking-header">
+                            <span class="booking-icon">&#x1F4C5;</span>
+                            <div>
+                                <div class="booking-title">Current Booking</div>
+                                <div class="booking-subtitle">Booking ID: ${b.booking_id}</div>
+                            </div>
+                        </div>
+                        <div class="booking-details">
+                            <div class="booking-detail">
+                                <div class="booking-detail-label">Centre</div>
+                                <div class="booking-detail-value">${b.centre || 'N/A'}</div>
+                            </div>
+                            <div class="booking-detail">
+                                <div class="booking-detail-label">Date</div>
+                                <div class="booking-detail-value">${b.date || 'N/A'}</div>
+                            </div>
+                            <div class="booking-detail">
+                                <div class="booking-detail-label">Time</div>
+                                <div class="booking-detail-value">${b.time || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Slots - same as regular display
+            if (data.slots && data.slots.length > 0) {
+                const centreMap = {};
+                data.slots.forEach(slot => {
+                    if (!centreMap[slot.centre] || slot.date < centreMap[slot.centre].date) {
+                        centreMap[slot.centre] = slot;
+                    }
+                });
+                const centres = Object.values(centreMap).sort((a, b) => a.date.localeCompare(b.date));
+
+                const earliest = data.slots[0];
+                html += `
+                    <div class="summary">
+                        <div class="summary-title">&#x2728; Earliest Available for Reschedule</div>
+                        <div class="summary-content">
+                            ${earliest.centre} - ${earliest.date_formatted} (${earliest.days_away} days)
+                        </div>
+                    </div>
+                `;
+
+                html += `
+                    <div class="slots-header">
+                        <span class="slots-title">Available Centres</span>
+                        <span class="slots-count">${centres.length} centres</span>
+                    </div>
+                    <div class="slots-grid">
+                `;
+
+                centres.forEach(slot => {
+                    let urgencyClass = '';
+                    if (slot.days_away <= 7) urgencyClass = 'urgent';
+                    else if (slot.days_away <= 30) urgencyClass = 'soon';
+
+                    const selectedClass = slot.is_selected ? 'selected' : '';
+
+                    html += `
+                        <div class="slot-card ${urgencyClass} ${selectedClass}">
+                            <div class="slot-info">
+                                <div class="slot-centre">${slot.centre}</div>
+                                <div class="slot-date">${slot.date_formatted}</div>
+                            </div>
+                            <div class="slot-days">
+                                <span class="days-number">${slot.days_away}</span>
+                                <span class="days-label">days</span>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+
+                html += `
+                    <div class="centre-summary">
+                        <div class="centre-summary-title">Quick Summary</div>
+                        <div class="centre-chips">
+                `;
+                centres.slice(0, 6).forEach(slot => {
+                    html += `
+                        <div class="centre-chip">
+                            <span>${slot.centre.split('(')[0].trim()}</span>
+                            <span class="centre-chip-date">${slot.days_away}d</span>
+                        </div>
+                    `;
+                });
+                html += '</div></div>';
+
+            } else {
+                html += `
+                    <div class="no-slots">
+                        <div class="no-slots-icon">&#x1F50D;</div>
+                        <p>No earlier slots available at this time.</p>
                         <p style="margin-top: 10px; font-size: 0.9rem;">Try again early morning (6-8 AM) for best availability.</p>
                     </div>
                 `;

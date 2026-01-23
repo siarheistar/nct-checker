@@ -52,6 +52,22 @@ class VehicleInfo:
         return asdict(self)
 
 
+@dataclass
+class BookingInfo:
+    """Existing booking details from NCTS"""
+    booking_id: str
+    registration: str
+    centre: str = ""
+    date: str = ""
+    time: str = ""
+    make: str = ""
+    model: str = ""
+    colour: str = ""
+
+    def to_dict(self):
+        return asdict(self)
+
+
 class NCTChecker:
     """NCT availability checker"""
 
@@ -176,6 +192,25 @@ class NCTChecker:
                         await page.locator('#confirmVehicleYes').click()
                         await page.wait_for_timeout(3000)
 
+                        # Check if user has existing booking (reschedule page appears)
+                        # Use a short timeout since we just want to detect if it's visible
+                        try:
+                            reschedule_btn = page.locator('text=RESCHEDULE BOOKING')
+                            if await reschedule_btn.is_visible(timeout=1500):
+                                print(f"[Attempt {attempt + 1}] Existing booking detected - reschedule page shown")
+                                return {
+                                    "success": True,
+                                    "error": None,
+                                    "vehicle": vehicle_info.to_dict() if vehicle_info else None,
+                                    "slots": [],
+                                    "checked_at": datetime.now().isoformat(),
+                                    "registration": self.registration,
+                                    "has_existing_booking": True,
+                                    "message": "This vehicle has an existing booking. Enter your Booking ID to search for earlier slots."
+                                }
+                        except Exception:
+                            pass  # No reschedule button, continue with normal flow
+
                         # Click "SEE MORE SUGGESTED CENTRES" if available
                         try:
                             see_more = page.locator('text=SEE MORE SUGGESTED CENTRES')
@@ -220,7 +255,8 @@ class NCTChecker:
             "vehicle": vehicle_info.to_dict() if vehicle_info else None,
             "slots": [s.to_dict() for s in slots],
             "checked_at": datetime.now().isoformat(),
-            "registration": self.registration
+            "registration": self.registration,
+            "has_existing_booking": False
         }
 
     async def _extract_vehicle_info(self, page) -> Optional[VehicleInfo]:
@@ -328,6 +364,203 @@ class NCTChecker:
         slots.sort(key=lambda x: x.date)
         return slots
 
+    async def check_reschedule_availability(self, booking_id: str) -> dict:
+        """Check availability for rescheduling an existing booking"""
+        slots = []
+        vehicle_info = None
+        booking_info = None
+        error = None
+        max_retries = 2
+
+        for attempt in range(max_retries):
+            browser = None
+            try:
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=[
+                            '--no-sandbox',
+                            '--disable-setuid-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-gpu',
+                            '--single-process',
+                            '--no-zygote',
+                            '--disable-extensions',
+                            '--disable-background-networking',
+                            '--disable-default-apps',
+                            '--disable-sync',
+                            '--disable-translate',
+                            '--hide-scrollbars',
+                            '--metrics-recording-only',
+                            '--mute-audio',
+                            '--no-first-run',
+                            '--safebrowsing-disable-auto-update',
+                            '--js-flags=--max-old-space-size=256',
+                        ]
+                    )
+                    context = await browser.new_context(
+                        viewport={'width': 1024, 'height': 768},
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        java_script_enabled=True,
+                        bypass_csp=True,
+                    )
+                    context.set_default_timeout(90000)
+                    page = await context.new_page()
+
+                    # Block unnecessary resources
+                    await page.route("**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf}", lambda route: route.abort())
+                    await page.route("**/google*", lambda route: route.abort())
+                    await page.route("**/analytics*", lambda route: route.abort())
+                    await page.route("**/facebook*", lambda route: route.abort())
+
+                    try:
+                        # Step 1: Go to homepage
+                        print(f"[Reschedule Attempt {attempt + 1}] Loading NCTS homepage...")
+                        await page.goto(self.BASE_URL, wait_until='domcontentloaded', timeout=60000)
+                        await page.wait_for_timeout(2000)
+
+                        # Handle cookie consent
+                        try:
+                            accept_btn = page.locator('#bs-gdpr-cookies-modal-accept-btn')
+                            if await accept_btn.is_visible(timeout=5000):
+                                await accept_btn.click()
+                                await page.wait_for_timeout(1000)
+                        except Exception:
+                            pass
+
+                        # Step 2: Enter registration
+                        print(f"[Reschedule Attempt {attempt + 1}] Entering registration: {self.registration}")
+                        reg_input = page.locator('#rid')
+                        await reg_input.wait_for(state='visible', timeout=10000)
+                        await reg_input.fill(self.registration)
+                        await page.wait_for_timeout(500)
+                        await page.locator('#btnSearchVehicle').click()
+
+                        # Wait for vehicle confirmation page
+                        print(f"[Reschedule Attempt {attempt + 1}] Waiting for vehicle confirmation...")
+                        await page.wait_for_url('**rid=**', timeout=30000)
+                        await page.wait_for_timeout(2000)
+
+                        # Extract vehicle info
+                        vehicle_info = await self._extract_vehicle_info(page)
+
+                        # Check checkboxes and confirm
+                        checkboxes = page.locator('input[type="checkbox"]')
+                        for i in range(await checkboxes.count()):
+                            cb = checkboxes.nth(i)
+                            if not await cb.is_checked():
+                                await cb.check()
+                                await page.wait_for_timeout(200)
+
+                        print(f"[Reschedule Attempt {attempt + 1}] Confirming vehicle...")
+                        await page.locator('#confirmVehicleYes').click()
+                        await page.wait_for_timeout(3000)
+
+                        # Step 3: Click RESCHEDULE BOOKING button
+                        print(f"[Reschedule Attempt {attempt + 1}] Looking for Reschedule Booking option...")
+                        reschedule_btn = page.locator('text=RESCHEDULE BOOKING').first
+                        if not await reschedule_btn.is_visible(timeout=5000):
+                            error = "No existing booking found for this registration. Use regular check instead."
+                            break
+                        await reschedule_btn.click()
+                        await page.wait_for_timeout(2000)
+
+                        # Step 4: Enter Booking ID
+                        print(f"[Reschedule Attempt {attempt + 1}] Entering booking ID: {booking_id}")
+                        booking_input = page.locator('input[type="text"]').first
+                        await booking_input.wait_for(state='visible', timeout=10000)
+                        await booking_input.fill(booking_id)
+                        await page.wait_for_timeout(500)
+
+                        # Click the Reschedule Booking button to confirm
+                        confirm_reschedule_btn = page.locator('button:has-text("RESCHEDULE BOOKING"), input[type="submit"][value*="RESCHEDULE"]')
+                        if await confirm_reschedule_btn.count() == 0:
+                            confirm_reschedule_btn = page.locator('text=RESCHEDULE BOOKING').last
+                        await confirm_reschedule_btn.click()
+                        await page.wait_for_timeout(3000)
+
+                        # Step 5: Confirm booking details - extract booking info first
+                        print(f"[Reschedule Attempt {attempt + 1}] Extracting booking details...")
+                        booking_info = await self._extract_booking_info(page, booking_id)
+
+                        # Click YES to confirm booking
+                        yes_btn = page.locator('text=YES').last
+                        if await yes_btn.is_visible(timeout=5000):
+                            await yes_btn.click()
+                            await page.wait_for_timeout(3000)
+
+                        # Step 6: Click "SEE MORE SUGGESTED CENTRES" if available
+                        try:
+                            see_more = page.locator('text=SEE MORE SUGGESTED CENTRES')
+                            if await see_more.is_visible(timeout=5000):
+                                await see_more.click()
+                                await page.wait_for_timeout(2000)
+                        except Exception:
+                            pass
+
+                        # Step 7: Extract availability (same as regular flow)
+                        print(f"[Reschedule Attempt {attempt + 1}] Extracting availability...")
+                        slots = await self._extract_availability(page)
+
+                        error = None
+                        break
+
+                    except PlaywrightTimeout as e:
+                        print(f"[Reschedule Attempt {attempt + 1}] Timeout: {e}")
+                        if attempt < max_retries - 1:
+                            print("Retrying...")
+                            continue
+                        error = "Timeout - the NCTS website took too long to respond. Please try again."
+                    except Exception as e:
+                        print(f"[Reschedule Attempt {attempt + 1}] Error: {e}")
+                        if attempt < max_retries - 1:
+                            print("Retrying...")
+                            continue
+                        error = f"Error checking reschedule availability: {str(e)}"
+                    finally:
+                        await browser.close()
+
+            except Exception as e:
+                print(f"[Reschedule Attempt {attempt + 1}] Browser error: {e}")
+                if attempt < max_retries - 1:
+                    continue
+                error = f"Browser error: {str(e)}"
+
+        return {
+            "success": error is None,
+            "error": error,
+            "vehicle": vehicle_info.to_dict() if vehicle_info else None,
+            "booking": booking_info.to_dict() if booking_info else None,
+            "slots": [s.to_dict() for s in slots],
+            "checked_at": datetime.now().isoformat(),
+            "registration": self.registration,
+            "booking_id": booking_id
+        }
+
+    async def _extract_booking_info(self, page, booking_id: str) -> Optional[BookingInfo]:
+        """Extract existing booking details from confirmation page"""
+        try:
+            info = BookingInfo(booking_id=booking_id, registration=self.registration)
+            page_text = await page.inner_text('body')
+
+            patterns = {
+                'centre': r'NCT Centre[:\s]+([^\n]+)',
+                'date': r'Date[:\s]+([^\n]+)',
+                'time': r'Time[:\s]+(\d{1,2}:\d{2})',
+                'make': r'Make[:\s]+([A-Z]+)',
+                'model': r'Model[:\s]+([A-Z0-9]+)',
+                'colour': r'Colour[:\s]+([A-Z]+)',
+            }
+
+            for field, pattern in patterns.items():
+                match = re.search(pattern, page_text, re.I)
+                if match:
+                    setattr(info, field, match.group(1).strip())
+
+            return info
+        except Exception:
+            return None
+
 
 def run_async(coro):
     """Run async function in sync context"""
@@ -360,6 +593,33 @@ def check_availability():
 
     checker = NCTChecker(registration)
     result = run_async(checker.check_availability())
+
+    return jsonify(result)
+
+
+@app.route('/api/reschedule', methods=['POST'])
+def check_reschedule():
+    """API endpoint to check reschedule availability for existing booking"""
+    data = request.get_json()
+    registration = data.get('registration', '').strip()
+    booking_id = data.get('booking_id', '').strip()
+
+    if not registration:
+        return jsonify({"success": False, "error": "Please enter a registration number"})
+
+    if not booking_id:
+        return jsonify({"success": False, "error": "Please enter a booking ID"})
+
+    # Validate registration format (basic check)
+    if len(registration) < 5 or len(registration) > 10:
+        return jsonify({"success": False, "error": "Invalid registration format"})
+
+    # Validate booking ID (should be numeric)
+    if not booking_id.isdigit():
+        return jsonify({"success": False, "error": "Invalid booking ID format - should be numeric"})
+
+    checker = NCTChecker(registration)
+    result = run_async(checker.check_reschedule_availability(booking_id))
 
     return jsonify(result)
 
