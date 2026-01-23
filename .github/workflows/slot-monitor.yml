@@ -212,39 +212,80 @@ jobs:
               slots.sort(key=lambda x: x['date'])
               return vehicle_info, slots
 
-          def generate_alert_email(vehicle_info, slots, alert_type):
-              """Generate HTML email for alerts"""
-              urgent_color = "#ff6b6b" if alert_type == "urgent" else "#ffa726"
-              title = "URGENT: NCT Slot Available!" if alert_type == "urgent" else "NCT Slot Available Soon!"
+          def generate_status_email(vehicle_info, slots, alert_type):
+              """Generate HTML email for all status types including info"""
+              if alert_type == "urgent":
+                  header_color = "#dc3545"
+                  title = "🚨 URGENT: NCT Slot Available!"
+                  subtitle = "Book immediately - slot may be taken!"
+              elif alert_type == "soon":
+                  header_color = "#fd7e14"
+                  title = "📅 NCT Slot Available Soon!"
+                  subtitle = "Good availability within 30 days"
+              else:  # info
+                  header_color = "#28a745"
+                  title = "✅ NCT Slot Status Update"
+                  subtitle = "Regular monitoring report"
 
-              vehicle_desc = f"{vehicle_info.get('year', '')} {vehicle_info.get('make', '')} {vehicle_info.get('model', '')}"
+              vehicle_desc = f"{vehicle_info.get('year', '')} {vehicle_info.get('make', '')} {vehicle_info.get('model', '')}".strip()
+              earliest = slots[0] if slots else None
 
               slots_html = ""
-              for slot in slots[:5]:  # Show top 5
+              for slot in slots[:5]:
+                  days = slot['days_away']
+                  if days <= 7:
+                      badge = '<span style="background:#dc3545;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">URGENT</span>'
+                  elif days <= 30:
+                      badge = '<span style="background:#fd7e14;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">SOON</span>'
+                  else:
+                      badge = ''
                   slots_html += f"""
                   <tr>
                       <td style="padding: 12px; border-bottom: 1px solid #eee;">{slot['centre']}</td>
                       <td style="padding: 12px; border-bottom: 1px solid #eee;">{slot['date_formatted']}</td>
-                      <td style="padding: 12px; border-bottom: 1px solid #eee; font-weight: bold; color: {urgent_color};">{slot['days_away']} days</td>
+                      <td style="padding: 12px; border-bottom: 1px solid #eee;">{days} days {badge}</td>
                   </tr>
                   """
 
+              # Status summary
+              urgent_count = len([s for s in slots if s['days_away'] <= 7])
+              soon_count = len([s for s in slots if s['days_away'] <= 30])
+              
+              if urgent_count > 0:
+                  status_text = f"🚨 URGENT: {urgent_count} slot(s) within 7 days!"
+                  status_color = "#dc3545"
+              elif soon_count > 0:
+                  status_text = f"📅 {soon_count} slot(s) within 30 days"
+                  status_color = "#fd7e14"
+              elif earliest:
+                  status_text = f"✓ No urgent slots - earliest is {earliest['days_away']} days away"
+                  status_color = "#28a745"
+              else:
+                  status_text = "❌ No slots found"
+                  status_color = "#6c757d"
+
               html = f"""
               <html>
-              <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0;">
-                      <h1 style="margin: 0; color: #ffd700;">{title}</h1>
-                      <p style="margin: 10px 0 0 0; opacity: 0.9;">Registration: {REGISTRATION}</p>
+              <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f8f9fa;">
+                  <div style="background: {header_color}; color: white; padding: 25px; border-radius: 12px 12px 0 0;">
+                      <h1 style="margin: 0; font-size: 24px;">{title}</h1>
+                      <p style="margin: 8px 0 0 0; opacity: 0.9;">{subtitle}</p>
                   </div>
 
-                  <div style="padding: 30px; background: #f5f5f5; border-radius: 0 0 12px 12px;">
-                      <p style="font-size: 16px; margin-bottom: 20px;">
-                          Good news! Earlier NCT slots are now available for your <strong>{vehicle_desc}</strong>.
-                      </p>
+                  <div style="padding: 25px; background: white; border-radius: 0 0 12px 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                      <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                          <strong>🚗 Vehicle:</strong> {REGISTRATION} {('- ' + vehicle_desc) if vehicle_desc else ''}<br>
+                          <strong>📋 NCT Due:</strong> {vehicle_info.get('nct_due_date', 'Unknown')}
+                      </div>
 
-                      <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
+                      <div style="background: {status_color}15; border-left: 4px solid {status_color}; padding: 15px; margin-bottom: 20px;">
+                          <strong style="color: {status_color};">Earliest:</strong> {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days)<br>
+                          <span style="color: {status_color};">{status_text}</span>
+                      </div>
+
+                      <table style="width: 100%; border-collapse: collapse; background: #fafafa; border-radius: 8px; overflow: hidden;">
                           <thead>
-                              <tr style="background: #1a1a2e; color: white;">
+                              <tr style="background: #343a40; color: white;">
                                   <th style="padding: 12px; text-align: left;">Centre</th>
                                   <th style="padding: 12px; text-align: left;">Date</th>
                                   <th style="padding: 12px; text-align: left;">Days Away</th>
@@ -255,15 +296,17 @@ jobs:
                           </tbody>
                       </table>
 
-                      <p style="margin-top: 25px;">
-                          <a href="https://www.ncts.ie" style="display: inline-block; background: #ffd700; color: #1a1a2e; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
-                              Book Now on NCTS.ie
+                      <p style="margin-top: 25px; text-align: center;">
+                          <a href="https://www.ncts.ie" style="display: inline-block; background: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                              🔗 Book Now on NCTS.ie
                           </a>
                       </p>
 
-                      <p style="color: #888; font-size: 12px; margin-top: 30px;">
-                          NCT Due Date: {vehicle_info.get('nct_due_date', 'Unknown')}<br>
-                          Checked at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
+                      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;">
+                      
+                      <p style="color: #6c757d; font-size: 12px; text-align: center; margin: 0;">
+                          📊 Total slots found: {len(slots)} | Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC<br>
+                          This is an automated hourly check. Reply to unsubscribe.
                       </p>
                   </div>
               </body>
@@ -283,6 +326,24 @@ jobs:
 
               if not slots:
                   print("No slots found or error occurred")
+                  # Send email even when no slots found
+                  if ALERT_EMAIL:
+                      subject = f"❌ NCT Monitor: No slots found for {REGISTRATION}"
+                      html = f"""
+                      <html><body style="font-family: Arial, sans-serif; padding: 20px;">
+                          <h2>❌ NCT Slot Check Failed</h2>
+                          <p>No available slots found for registration <strong>{REGISTRATION}</strong>.</p>
+                          <p>This could be due to:</p>
+                          <ul>
+                              <li>Website temporarily unavailable</li>
+                              <li>No slots currently in the system</li>
+                              <li>Registration number issue</li>
+                          </ul>
+                          <p><a href="https://www.ncts.ie">Check manually on NCTS.ie</a></p>
+                          <p style="color: #888; font-size: 12px;">Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
+                      </body></html>
+                      """
+                      send_alert_email(subject, html)
                   return
 
               print(f"\nFound {len(slots)} available slots:")
@@ -292,24 +353,25 @@ jobs:
               earliest = slots[0]
               print(f"\nEarliest: {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days)")
 
-              # Check for urgent slots (within 7 days)
+              # Determine alert type and send email
               urgent_slots = [s for s in slots if s['days_away'] <= URGENT_THRESHOLD]
+              soon_slots = [s for s in slots if s['days_away'] <= SOON_THRESHOLD]
+
               if urgent_slots:
                   print(f"\n🚨 URGENT: {len(urgent_slots)} slot(s) within {URGENT_THRESHOLD} days!")
-                  subject = f"🚨 URGENT NCT Alert: Slot in {urgent_slots[0]['days_away']} days for {REGISTRATION}!"
-                  html = generate_alert_email(vehicle_info, urgent_slots, "urgent")
-                  send_alert_email(subject, html)
-
-              # Check for soon slots (within 30 days)
-              elif earliest['days_away'] <= SOON_THRESHOLD:
-                  soon_slots = [s for s in slots if s['days_away'] <= SOON_THRESHOLD]
+                  subject = f"🚨 URGENT NCT: {earliest['centre']} in {earliest['days_away']} days! [{REGISTRATION}]"
+                  html = generate_status_email(vehicle_info, slots, "urgent")
+              elif soon_slots:
                   print(f"\n📅 {len(soon_slots)} slot(s) within {SOON_THRESHOLD} days")
-                  subject = f"📅 NCT Alert: Slot in {earliest['days_away']} days for {REGISTRATION}"
-                  html = generate_alert_email(vehicle_info, soon_slots, "soon")
-                  send_alert_email(subject, html)
-
+                  subject = f"📅 NCT Alert: {earliest['centre']} in {earliest['days_away']} days [{REGISTRATION}]"
+                  html = generate_status_email(vehicle_info, slots, "soon")
               else:
                   print(f"\n✓ No urgent slots - earliest is {earliest['days_away']} days away")
+                  subject = f"✅ NCT Status: {earliest['centre']} - {earliest['date_formatted']} ({earliest['days_away']} days) [{REGISTRATION}]"
+                  html = generate_status_email(vehicle_info, slots, "info")
+
+              # Always send email
+              send_alert_email(subject, html)
 
               # Output summary for GitHub Actions
               print(f"\n::notice::Earliest NCT slot: {earliest['centre']} on {earliest['date_formatted']} ({earliest['days_away']} days)")
