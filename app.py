@@ -15,6 +15,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Optional
+from pathlib import Path
 from flask import Flask, render_template, request, jsonify
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
@@ -72,6 +73,7 @@ class NCTChecker:
     """NCT availability checker"""
 
     BASE_URL = "https://www.ncts.ie"
+    STATE_FILE = Path("nct_auth_state.json")
 
     def __init__(self, registration: str):
         self.registration = registration.upper().replace(" ", "").replace("-", "")
@@ -133,12 +135,23 @@ class NCTChecker:
                             '--js-flags=--max-old-space-size=256',
                         ]
                     )
-                    context = await browser.new_context(
-                        viewport={'width': 1024, 'height': 768},
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        java_script_enabled=True,
-                        bypass_csp=True,
-                    )
+                    
+                    # Try to use saved session state
+                    context_options = {
+                        'viewport': {'width': 1024, 'height': 768},
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'java_script_enabled': True,
+                        'bypass_csp': True,
+                    }
+                    
+                    if self.STATE_FILE.exists():
+                        try:
+                            context_options['storage_state'] = str(self.STATE_FILE)
+                            print(f"📂 Loading cached session state from {self.STATE_FILE}")
+                        except Exception as e:
+                            print(f"⚠️ Could not load cached state: {e}")
+                    
+                    context = await browser.new_context(**context_options)
                     # Set longer default timeout
                     context.set_default_timeout(90000)
                     page = await context.new_page()
@@ -223,6 +236,13 @@ class NCTChecker:
                         # Extract availability
                         print(f"[Attempt {attempt + 1}] Extracting availability...")
                         slots = await self._extract_availability(page)
+                        
+                        # Save session state for faster future checks
+                        try:
+                            await context.storage_state(path=str(self.STATE_FILE))
+                            print(f"💾 Session state saved to {self.STATE_FILE}")
+                        except Exception as e:
+                            print(f"⚠️ Could not save session state: {e}")
 
                         # Success - break retry loop
                         error = None
@@ -398,12 +418,23 @@ class NCTChecker:
                             '--js-flags=--max-old-space-size=256',
                         ]
                     )
-                    context = await browser.new_context(
-                        viewport={'width': 1024, 'height': 768},
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        java_script_enabled=True,
-                        bypass_csp=True,
-                    )
+                    
+                    # Try to use saved session state
+                    context_options = {
+                        'viewport': {'width': 1024, 'height': 768},
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'java_script_enabled': True,
+                        'bypass_csp': True,
+                    }
+                    
+                    if self.STATE_FILE.exists():
+                        try:
+                            context_options['storage_state'] = str(self.STATE_FILE)
+                            print(f"📂 Loading cached session state from {self.STATE_FILE}")
+                        except Exception as e:
+                            print(f"⚠️ Could not load cached state: {e}")
+                    
+                    context = await browser.new_context(**context_options)
                     context.set_default_timeout(90000)
                     page = await context.new_page()
 
@@ -501,6 +532,13 @@ class NCTChecker:
                         # Step 7: Extract availability (same as regular flow)
                         print(f"[Reschedule Attempt {attempt + 1}] Extracting availability...")
                         slots = await self._extract_availability(page)
+                        
+                        # Save session state for faster future checks
+                        try:
+                            await context.storage_state(path=str(self.STATE_FILE))
+                            print(f"💾 Session state saved to {self.STATE_FILE}")
+                        except Exception as e:
+                            print(f"⚠️ Could not save session state: {e}")
 
                         error = None
                         break
