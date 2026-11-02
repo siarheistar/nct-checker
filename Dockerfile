@@ -3,6 +3,8 @@ FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
 
 WORKDIR /app
 
+ENV PYTHONUNBUFFERED=1
+
 # Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -10,7 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 COPY templates/ templates/
-COPY static/ static/
 
 # Expose port (Fly.io uses 8080 by default)
 EXPOSE 8080
