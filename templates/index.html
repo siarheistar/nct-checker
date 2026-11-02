@@ -678,6 +678,34 @@
             <p class="loading-text" style="margin-top: 8px; font-size: 0.85rem;">This may take up to 30 seconds</p>
         </div>
 
+        <style>
+            .ncts-browser-help, .ncts-browser-results {background: #252a40; border: 1px solid #484e66; border-radius: 16px; padding: 22px; margin: 20px 0; color: #eee;}
+            .ncts-browser-help summary {cursor: pointer; color: #ffd700; font-weight: 600;}
+            .ncts-browser-help p, .ncts-browser-results p {line-height: 1.6; margin: 14px 0;}
+            .ncts-browser-help a, .ncts-browser-results a, .error-card a {color: #ffd700;}
+            .ncts-browser-help ol {padding-left: 24px; line-height: 1.8;}
+            .ncts-browser-help label {display: block; margin: 18px 0 8px;}
+            .ncts-browser-help textarea {width: 100%; min-height: 120px; padding: 12px; color: #eee; background: #191d30; border: 1px solid #747b94; border-radius: 8px; font: inherit;}
+            .ncts-browser-help button {padding: 12px 18px; margin-top: 12px; background: #ffd700; color: #15182a; border: 0; border-radius: 8px; font: inherit; cursor: pointer;}
+            .ncts-browser-results table {width: 100%; border-collapse: collapse; margin: 20px 0;}
+            .ncts-browser-results td, .ncts-browser-results th {text-align: left; padding: 12px 6px; border-bottom: 1px solid #484e66;}
+            #ncts-import-message {color: #ff9191;}
+        </style>
+        <details id="ncts-browser-search" class="ncts-browser-help">
+            <summary>Search using my browser — Human verification</summary>
+            <p>If NCTS blocks automatic search, use your own browser session. You complete Human verification on NCTS; this checker only reads the dates. Booking remains entirely with you.</p>
+            <ol>
+                <li><a href="https://www.ncts.ie/" target="_blank" rel="noopener noreferrer">Open the official NCTS website</a>, enter your registration and complete Human verification yourself.</li>
+                <li>Confirm the vehicle to view availability, then expand <strong>SEE MORE SUGGESTED CENTRES</strong>. Stop before selecting a date or booking.</li>
+                <li>Copy the availability page text, paste it below and click <strong>Show dates</strong>.</li>
+            </ol>
+            <label for="ncts-page-text">Paste the NCTS availability page text</label>
+            <textarea id="ncts-page-text" placeholder="SELECTED CENTRE&#10;Greenhills (Exit 11,M50)&#10;NEXT AVAILABLE DATE&#10;1st Mar 2027"></textarea>
+            <button type="button" id="ncts-import-button">Show dates</button>
+            <p id="ncts-import-message" role="status"></p>
+            <p>Desktop shortcut: drag <a id="ncts-read-dates" href="#" draggable="true">Show NCT dates in Checker</a> to your bookmarks bar. Click that bookmark on the NCTS availability page to transfer just centre names and dates here. Cookies and vehicle details are never copied.</p>
+        </details>
+
         <div class="results" id="results">
             <!-- Results will be inserted here -->
         </div>
@@ -1121,5 +1149,6 @@
             }
         }
     </script>
+    <script src="/static/browser_search.js" defer></script>
 </body>
 </html>

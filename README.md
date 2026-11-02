@@ -38,6 +38,22 @@ python app.py
 
 Visit http://localhost:5000
 
+## Search when NCTS asks for Human verification
+
+Open **Search using my browser — Human verification** in the checker. Open NCTS in
+your browser, enter the registration and complete any Human verification yourself.
+Continue to availability and expand **SEE MORE SUGGESTED CENTRES**. Copy the page
+text into the checker and select **Show dates** to sort the centres by earliest date.
+
+On desktop, the same panel provides a bookmark named **Show NCT dates in Checker**.
+Save it to the bookmarks bar and click it on the official NCTS availability page.
+It transfers only centre names, dates and a capture timestamp to the checker via a
+URL fragment. It does not copy cookies, vehicle details or NCTS session URLs, and
+the imported data is processed in the browser without another server search.
+
+Imported results are a snapshot and may change. Selecting and booking an appointment
+is always done manually on NCTS. This feature does not solve or bypass a CAPTCHA.
+
 ## Deployment Options
 
 ### Option 1: Render.com (Recommended - Free tier available)

@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 COPY templates/ templates/
+COPY static/ static/
 
 # Expose port (Fly.io uses 8080 by default)
 EXPOSE 8080

@@ -32,6 +32,9 @@ jobs:
       - name: Test NCTS navigation and upstream errors
         run: python -m unittest discover -s tests -v
 
+      - name: Test human-assisted date transfer
+        run: node --test tests/test_browser_search.js
+
       - name: Run linting
         run: |
           pip install flake8
