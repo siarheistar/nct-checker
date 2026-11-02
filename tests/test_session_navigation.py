@@ -88,6 +88,7 @@ class SessionNavigationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_collapsed_select_uses_native_form_when_pointer_controls_are_overlaid(self):
         await self.page.unroute('https://ncts.test/**')
+
         async def desktop(route):
             if 'centre=Fonthill' in route.request.url:
                 html = '<h1>Select from available dates at Fonthill</h1><input name="SelectedBookingDay">'
