@@ -69,6 +69,10 @@ class BookingInfo:
         return asdict(self)
 
 
+class NCTSiteError(Exception):
+    """An upstream response that retrying the same search cannot fix."""
+
+
 class NCTChecker:
     """NCT availability checker"""
 
@@ -100,6 +104,58 @@ class NCTChecker:
             except ValueError:
                 continue
         return None
+
+    async def _raise_if_upstream_error(self, page):
+        """Detect access denials and validation errors instead of waiting for a form."""
+        blocked = page.locator('iframe[src*="_Incapsula_Resource"], iframe[src*="captcha"]')
+        text = (await page.inner_text('body')).lower()
+        if await blocked.count() or any(marker in text for marker in (
+            'request unsuccessful', 'access denied', 'verify you are human',
+            'pardon our interruption', 'incident id',
+        )):
+            raise NCTSiteError(
+                "NCTS is blocking automated access. Open ncts.ie directly to check availability; "
+                "repeating this search will not resolve the block."
+            )
+        validation = page.locator('.validation-summary-errors:visible, .field-validation-error:visible')
+        if await validation.count():
+            raise NCTSiteError(
+                "NCTS could not validate this vehicle registration. Check the number on ncts.ie."
+            )
+
+    async def _open_vehicle_confirmation(self, page):
+        """Support the current NCTS form and wait for content, not a legacy URL."""
+        response = await page.goto(self.BASE_URL, wait_until='domcontentloaded', timeout=60000)
+        await self._raise_if_upstream_error(page)
+        if response and response.status >= 400:
+            raise NCTSiteError("NCTS is currently unavailable. Please check directly on ncts.ie.")
+
+        cookie_button = page.locator('#bs-gdpr-cookies-modal-accept-btn')
+        if await cookie_button.is_visible():
+            await cookie_button.click()
+
+        registration = page.locator('input[name="Registration"]:visible, #rid:visible').first
+        try:
+            await registration.wait_for(state='visible', timeout=10000)
+        except PlaywrightTimeout:
+            await self._raise_if_upstream_error(page)
+            raise NCTSiteError("The NCTS registration form is unavailable or has changed. Please use ncts.ie.")
+        await registration.fill(self.registration)
+        await page.locator('#btnSearchVehicle').click()
+        await page.wait_for_load_state('domcontentloaded')
+        await self._raise_if_upstream_error(page)
+        try:
+            await page.locator(
+                '#confirmVehicleYes:visible, iframe[src*="_Incapsula_Resource"]:visible, '
+                'iframe[src*="captcha"]:visible, .validation-summary-errors:visible, '
+                '.field-validation-error:visible'
+            ).first.wait_for(state='visible', timeout=30000)
+        except PlaywrightTimeout:
+            await self._raise_if_upstream_error(page)
+            raise NCTSiteError(
+                "NCTS did not show the vehicle confirmation page. Please check directly on ncts.ie."
+            )
+        await self._raise_if_upstream_error(page)
 
     async def check_availability(self) -> dict:
         """Run the check and return results as dict"""
@@ -163,32 +219,7 @@ class NCTChecker:
                     await page.route("**/facebook*", lambda route: route.abort())
 
                     try:
-                        # Step 1: Go to homepage with longer timeout
-                        print(f"[Attempt {attempt + 1}] Loading NCTS homepage...")
-                        await page.goto(self.BASE_URL, wait_until='domcontentloaded', timeout=60000)
-                        await page.wait_for_timeout(2000)
-
-                        # Handle cookie consent
-                        try:
-                            accept_btn = page.locator('#bs-gdpr-cookies-modal-accept-btn')
-                            if await accept_btn.is_visible(timeout=5000):
-                                await accept_btn.click()
-                                await page.wait_for_timeout(1000)
-                        except Exception:
-                            pass
-
-                        # Enter registration
-                        print(f"[Attempt {attempt + 1}] Entering registration: {self.registration}")
-                        reg_input = page.locator('#rid')
-                        await reg_input.wait_for(state='visible', timeout=10000)
-                        await reg_input.fill(self.registration)
-                        await page.wait_for_timeout(500)
-                        await page.locator('#btnSearchVehicle').click()
-
-                        # Wait for vehicle confirmation page
-                        print(f"[Attempt {attempt + 1}] Waiting for vehicle confirmation...")
-                        await page.wait_for_url('**rid=**', timeout=30000)
-                        await page.wait_for_timeout(2000)
+                        await self._open_vehicle_confirmation(page)
 
                         # Extract vehicle info
                         vehicle_info = await self._extract_vehicle_info(page)
@@ -248,6 +279,10 @@ class NCTChecker:
                         error = None
                         break
 
+                    except NCTSiteError as e:
+                        error = str(e)
+                        print(f"NCTS response: {error}", flush=True)
+                        break
                     except PlaywrightTimeout as e:
                         print(f"[Attempt {attempt + 1}] Timeout: {e}")
                         if attempt < max_retries - 1:
@@ -307,6 +342,7 @@ class NCTChecker:
         slots = []
 
         try:
+            await self._raise_if_upstream_error(page)
             await page.wait_for_selector('text=Other Suggested Centre', timeout=10000)
             page_text = await page.inner_text('body')
 
@@ -378,8 +414,13 @@ class NCTChecker:
                                     is_selected=True
                                 ))
 
+        except NCTSiteError:
+            raise
+        except PlaywrightTimeout:
+            await self._raise_if_upstream_error(page)
+            raise NCTSiteError("NCTS did not return the availability page. Please check directly on ncts.ie.")
         except Exception as e:
-            print(f"Error extracting availability: {e}")
+            raise NCTSiteError("Could not read availability from NCTS. Please check directly on ncts.ie.") from e
 
         slots.sort(key=lambda x: x.date)
         return slots
@@ -445,32 +486,7 @@ class NCTChecker:
                     await page.route("**/facebook*", lambda route: route.abort())
 
                     try:
-                        # Step 1: Go to homepage
-                        print(f"[Reschedule Attempt {attempt + 1}] Loading NCTS homepage...")
-                        await page.goto(self.BASE_URL, wait_until='domcontentloaded', timeout=60000)
-                        await page.wait_for_timeout(2000)
-
-                        # Handle cookie consent
-                        try:
-                            accept_btn = page.locator('#bs-gdpr-cookies-modal-accept-btn')
-                            if await accept_btn.is_visible(timeout=5000):
-                                await accept_btn.click()
-                                await page.wait_for_timeout(1000)
-                        except Exception:
-                            pass
-
-                        # Step 2: Enter registration
-                        print(f"[Reschedule Attempt {attempt + 1}] Entering registration: {self.registration}")
-                        reg_input = page.locator('#rid')
-                        await reg_input.wait_for(state='visible', timeout=10000)
-                        await reg_input.fill(self.registration)
-                        await page.wait_for_timeout(500)
-                        await page.locator('#btnSearchVehicle').click()
-
-                        # Wait for vehicle confirmation page
-                        print(f"[Reschedule Attempt {attempt + 1}] Waiting for vehicle confirmation...")
-                        await page.wait_for_url('**rid=**', timeout=30000)
-                        await page.wait_for_timeout(2000)
+                        await self._open_vehicle_confirmation(page)
 
                         # Extract vehicle info
                         vehicle_info = await self._extract_vehicle_info(page)
@@ -543,6 +559,10 @@ class NCTChecker:
                         error = None
                         break
 
+                    except NCTSiteError as e:
+                        error = str(e)
+                        print(f"NCTS response: {error}", flush=True)
+                        break
                     except PlaywrightTimeout as e:
                         print(f"[Reschedule Attempt {attempt + 1}] Timeout: {e}")
                         if attempt < max_retries - 1:
