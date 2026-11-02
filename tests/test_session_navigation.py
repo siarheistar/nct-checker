@@ -27,6 +27,8 @@ class SessionNavigationTests(unittest.IsolatedAsyncioTestCase):
                 html = '<h1>Available times</h1><input type="radio" name="time"><button>Book now</button>'
             elif url.path == '/expired':
                 html = '<h1>Additional security check</h1>'
+            elif url.path == '/contact-details':
+                html = '<h1>Contact details</h1><input name="email"><input type="hidden" name="SelectedBookingDay">'
             else:
                 html = f'''<p>SELECTED CENTRE<br>{centre}<br>NEXT AVAILABLE DATE<br>17th Feb 2027</p>
                     <h1>Select from available dates at {centre}</h1>
@@ -83,3 +85,35 @@ class SessionNavigationTests(unittest.IsolatedAsyncioTestCase):
         result = await self.navigator.open({'action': 'date', 'centre': 'Fonthill', 'date': '2027-02-17'})
         self.assertFalse(result['success'])
         self.assertTrue(self.page.url.endswith('/expired'))
+
+    async def test_collapsed_select_uses_native_form_when_pointer_controls_are_overlaid(self):
+        await self.page.unroute('https://ncts.test/**')
+        async def desktop(route):
+            if 'centre=Fonthill' in route.request.url:
+                html = '<h1>Select from available dates at Fonthill</h1><input name="SelectedBookingDay">'
+            else:
+                html = '''<p>SELECTED CENTRE<br>Greenhills<br>NEXT AVAILABLE DATE<br>1st Mar 2027</p>
+                    <span style="display:none">SELECT ANOTHER CENTRE</span>
+                    <select id="nctCentresDropdown" hidden onchange="location.href='/dates?centre='+this.selectedOptions[0].text"><option value="62">Greenhills</option><option value="18">Fonthill</option></select>
+                    <button id="18" onclick="location.href='/dates?centre=Fonthill'">SELECT THIS CENTRE</button>
+                    <label><input type="radio" id="18" name="SelectedBookingDay" style="display:none">Date</label>'''
+            await route.fulfill(status=200, content_type='text/html', body=html)
+        await self.page.route('https://ncts.test/**', desktop)
+        await self.page.goto('https://ncts.test/dates')
+        result = await self.navigator.open({'action': 'centre', 'centre': 'Fonthill', 'date': '2027-02-17'})
+        self.assertTrue(result['success'])
+        self.assertIn('centre=Fonthill', self.page.url)
+
+    async def test_can_return_from_times_to_calendar_without_new_login(self):
+        await self.navigator.open({'action': 'date', 'centre': 'Fonthill', 'date': '2027-02-17'})
+        result = await self.navigator.open({'action': 'centre', 'centre': 'Fonthill', 'date': '2027-02-17'})
+        self.assertTrue(result['success'])
+        self.assertIn('/dates', self.page.url)
+        self.assertEqual(len(self.context.pages), 1)
+
+    async def test_does_not_navigate_away_from_manual_booking_in_progress(self):
+        await self.navigator.open({'action': 'date', 'centre': 'Fonthill', 'date': '2027-02-17'})
+        await self.page.goto('https://ncts.test/contact-details')
+        result = await self.navigator.open({'action': 'date', 'centre': 'Fonthill', 'date': '2027-02-17'})
+        self.assertFalse(result['success'])
+        self.assertIn('/contact-details', self.page.url)

@@ -168,6 +168,7 @@ class SessionNavigator:
         self.allowed = {(slot['centre'], slot['date']) for slot in slots}
         self.allowed_hosts = allowed_hosts
         self.lock = asyncio.Lock()
+        self.time_url = None
 
     async def open(self, request):
         async with self.lock:
@@ -183,15 +184,28 @@ class SessionNavigator:
             if action == 'return':
                 return {'success': True}
             try:
+                calendar_days = self.page.locator('input[type="radio"][name="SelectedBookingDay"]')
+                if self.time_url and self.page.url != self.time_url:
+                    if await calendar_days.count() and await self.page.locator('#nctCentresDropdown').count():
+                        self.time_url = None
+                    else:
+                        return {'success': False, 'error': 'You have moved further into the NCTS booking. Return to the calendar manually before opening another date.'}
+                if not await calendar_days.count():
+                    if self.time_url and self.page.url == self.time_url:
+                        await self.page.go_back(wait_until='domcontentloaded', timeout=30000)
+                        self.time_url = None
+                    elif self.time_url:
+                        return {'success': False, 'error': 'You have moved further into the NCTS booking. Return to the calendar manually before opening another date.'}
                 text = await self.page.locator('body').inner_text(timeout=3000)
                 selected = re.search(r'SELECTED CENTRE\s*\n\s*([^\n]+)', text)
                 if not selected or selected[1].strip() != centre:
                     dropdown = self.page.locator('#nctCentresDropdown')
                     if not await dropdown.count():
                         return {'success': False, 'error': 'NCTS is no longer showing availability. Complete any visible prompt in the original tab.'}
-                    if not await dropdown.is_visible():
-                        await self.page.get_by_text(re.compile('SELECT ANOTHER CENTRE', re.I)).first.click(timeout=5000)
-                    await dropdown.select_option(label=centre, timeout=10000)
+                    # NCTS keeps this native select inside a collapsed panel. Its overlaid
+                    # pointer controls are unreliable; select the observed option and let the
+                    # site's normal change handler submit the current authenticated form.
+                    await dropdown.select_option(label=centre, force=True, timeout=10000)
                     await self.page.wait_for_load_state('domcontentloaded', timeout=30000)
                     await self.page.get_by_role('heading', name=re.compile(re.escape(centre))).first.wait_for(timeout=10000)
                 if action == 'date':
@@ -208,8 +222,10 @@ class SessionNavigator:
                     # The label click submits only the day and opens available times, not a booking.
                     await target.locator('..').click(timeout=10000)
                     await self.page.wait_for_load_state('domcontentloaded', timeout=30000)
+                    self.time_url = self.page.url
                 return {'success': True}
-            except PlaywrightError:
+            except PlaywrightError as error:
+                print('NCTS navigation failed:', str(error).splitlines()[0], flush=True)
                 return {'success': False, 'error': 'NCTS did not finish opening that centre/date. Continue in the original NCTS tab; no booking was made by the helper.'}
 
 
