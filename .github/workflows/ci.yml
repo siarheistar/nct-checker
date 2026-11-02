@@ -38,7 +38,7 @@ jobs:
       - name: Run linting
         run: |
           pip install flake8
-          flake8 app.py --max-line-length=120 --ignore=E501,W503
+          flake8 app.py local_browser_search.py tests --max-line-length=120 --ignore=E501,W503
 
       - name: Test imports
         run: python -c "from app import app, NCTChecker; print('Imports OK')"

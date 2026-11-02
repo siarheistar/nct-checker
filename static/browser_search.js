@@ -93,17 +93,52 @@
                 const cell = document.createElement('th'); cell.textContent = label; head.append(cell);
             });
             const body = table.createTBody();
+            const hasSession = typeof window.nctOpenSlot === 'function';
+            const status = document.createElement('p');
+            status.setAttribute('role', 'status');
+            async function openSession(request, button) {
+                button.disabled = true;
+                status.textContent = 'Opening your existing NCTS session…';
+                try {
+                    const result = await window.nctOpenSlot(request);
+                    status.textContent = result && result.success ?
+                        'Opened in your original NCTS tab. Choose a time and confirm there yourself.' :
+                        (result && result.error) || 'Could not open that date. Use your original NCTS tab.';
+                } catch (_) { status.textContent = 'The browser helper is no longer connected. Keep the original NCTS tab open and restart the helper if needed.'; }
+                finally { button.disabled = false; }
+            }
+            function sessionButton(label, accessibleLabel, request) {
+                const button = document.createElement('button');
+                button.type = 'button'; button.className = 'ncts-session-link';
+                button.textContent = label; button.setAttribute('aria-label', accessibleLabel);
+                button.addEventListener('click', () => openSession(request, button));
+                return button;
+            }
             capture.slots.forEach(slot => {
                 const row = body.insertRow();
-                row.insertCell().textContent = slot.centre;
-                row.insertCell().textContent = new Date(slot.date + 'T12:00:00Z').toLocaleDateString('en-IE', {
+                const dateLabel = new Date(slot.date + 'T12:00:00Z').toLocaleDateString('en-IE', {
                     day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Dublin'
                 });
+                const centreCell = row.insertCell(), dateCell = row.insertCell();
+                if (hasSession) {
+                    centreCell.append(sessionButton(slot.centre, 'Open centre ' + slot.centre,
+                        {action: 'centre', centre: slot.centre, date: slot.date}));
+                    dateCell.append(sessionButton(dateLabel, 'View times for ' + dateLabel + ' at ' + slot.centre,
+                        {action: 'date', centre: slot.centre, date: slot.date}));
+                } else {
+                    centreCell.textContent = slot.centre; dateCell.textContent = dateLabel;
+                }
             });
             card.append(table);
-            const link = document.createElement('a');
-            link.href = 'https://www.ncts.ie/'; link.target = '_blank'; link.rel = 'noopener noreferrer';
-            link.textContent = 'Open NCTS — choose and book there yourself'; card.append(link);
+            if (hasSession) {
+                const hint = document.createElement('p');
+                hint.textContent = 'Click a centre to view its dates, or click a date to view times in your original NCTS tab. Your session stays open; nothing is booked automatically.';
+                card.append(hint, sessionButton('Return to my NCTS tab', 'Return to my NCTS tab', {action: 'return'}), status);
+            } else {
+                const hint = document.createElement('p');
+                hint.textContent = 'Keep your original NCTS tab open to book. One-click centre/date buttons are available when results are opened by the local browser helper.';
+                card.append(hint);
+            }
             results.replaceChildren(card);
             results.classList.add('active');
             results.scrollIntoView({behavior: 'smooth', block: 'start'});

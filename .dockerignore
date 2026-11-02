@@ -13,6 +13,7 @@
 
 # NCT specific
 **/nct_auth_state.json
+**/.nct-browser-profile
 **/*.png
 
 # OS

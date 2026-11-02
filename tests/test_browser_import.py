@@ -59,3 +59,18 @@ class BrowserImportTests(unittest.IsolatedAsyncioTestCase):
         await self.page.goto('https://checker.test/#ncts-data=' + quote(json.dumps(payload)))
         await self.page.get_by_text('Invalid centre or date in the imported results.', exact=True).wait_for()
         self.assertEqual(await self.page.locator('#results img').count(), 0)
+
+    async def test_session_buttons_delegate_specific_centre_and_day_without_opening_new_tab(self):
+        opened = []
+        await self.page.expose_function('nctOpenSlot', lambda value: opened.append(value) or {'success': True})
+        payload = {'version': 1, 'capturedAt': '2026-11-02T10:00:00Z',
+                   'slots': [{'centre': 'Naas', 'date': '2026-11-12'}]}
+        await self.page.goto('https://checker.test/#ncts-data=' + quote(json.dumps(payload)))
+        await self.page.get_by_role('button', name='Open centre Naas', exact=True).click()
+        await self.page.get_by_text('Opened in your original NCTS tab. Choose a time and confirm there yourself.', exact=True).wait_for()
+        await self.page.get_by_role('button', name='View times for 12 November 2026 at Naas', exact=True).click()
+        await self.page.get_by_text('Opened in your original NCTS tab. Choose a time and confirm there yourself.', exact=True).wait_for()
+        self.assertEqual(opened[0], {'action': 'centre', 'centre': 'Naas', 'date': '2026-11-12'})
+        self.assertEqual(opened[1], {'action': 'date', 'centre': 'Naas', 'date': '2026-11-12'})
+        self.assertEqual(len(self.page.context.pages), 1)
+        self.assertFalse(any(path.startswith('/api/') for _, path in self.requests))

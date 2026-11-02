@@ -38,7 +38,38 @@ python app.py
 
 Visit http://localhost:5000
 
-## Search when NCTS asks for Human verification
+## Automatic continuation after Human verification
+
+On a Mac with Google Chrome and the Python environment above, double-click
+`run-local-browser.command`, or run:
+
+```bash
+.venv/bin/python local_browser_search.py --registration YOUR_REGISTRATION
+```
+
+The helper opens a separate, visible Chrome window on your computer, accepts cookie
+preferences and enters the registration. If NCTS presents Human verification, the
+helper waits while you complete it and resumes automatically afterwards. Review and
+confirm any NCTS/voluntary-testing conditions in the browser when prompted. It then
+expands suggested centres, collects the displayed dates and opens sorted results in
+the Fly.io checker automatically, without copying or pasting text.
+
+Results opened by the helper have clickable centre names and dates. A centre opens
+its calendar; a date opens that day's times in the **original NCTS tab**, retaining
+the same browser context and cookies. No new NCTS tab or home-page search is opened.
+Choose a time and complete the booking yourself. If a captured date is no longer
+available, the helper leaves the original session open and reports the change.
+Ordinary pasted/bookmark snapshots cannot provide these session-bound actions.
+
+The two `--accept-current-...-conditions` options are for an operator who has just
+obtained explicit approval for the specific displayed conditions in the current
+search; they are off by default and each approval is consumed once. The helper does
+not solve CAPTCHAs, select a date/time, reserve an appointment or pay. You can book
+manually in the NCTS tab after reviewing the results. Close the separate Chrome
+window to stop the helper. Its private local browser profile is excluded from Git
+and Docker uploads; cookies are never transferred to Fly.io.
+
+## Manual fallback when NCTS asks for Human verification
 
 Open **Search using my browser — Human verification** in the checker. Open NCTS in
 your browser, enter the registration and complete any Human verification yourself.
